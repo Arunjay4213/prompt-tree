@@ -7,7 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { StartBox } from "./components/StartBox";
 import { TopBar } from "./components/TopBar";
 import { Button, Label, Skeleton, TipProvider, Toast } from "./components/ui";
-import { boot, flushSavesOnHide, newConversation, retryOpen, saveBeforeUnload, selectOpenConversation, useStore } from "./store";
+import { boot, flushSavesOnHide, leavingLosesWork, newConversation, retryOpen, selectOpenConversation, useStore } from "./store";
 import * as tree from "./tree";
 
 export function App() {
@@ -19,15 +19,23 @@ export function App() {
         newConversation();
       }
     };
-    // Hidden (another tab, minimized, closing): pending saves run now instead of after their delay.
+    // Hidden (another tab, minimized) or closing: pending saves run now instead of after their delay.
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flushSavesOnHide();
     };
-    window.addEventListener("pagehide", saveBeforeUnload);
+    // Leaving would lose this tab's version (a conflict, or a failed save): ask the browser to confirm.
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!leavingLosesWork()) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("pagehide", flushSavesOnHide);
+    window.addEventListener("beforeunload", onBeforeUnload);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("keydown", onKeyDown);
     return () => {
-      window.removeEventListener("pagehide", saveBeforeUnload);
+      window.removeEventListener("pagehide", flushSavesOnHide);
+      window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("keydown", onKeyDown);
     };
@@ -81,7 +89,7 @@ function LoadFailed({ reason }: { reason: string }) {
 function CanvasSkeleton() {
   return (
     <div className="grid-surface h-full p-12" aria-busy="true" aria-label="Loading the conversation">
-      <div className="w-[380px] rounded-cell border border-line bg-bg">
+      <div className="w-(--card-width) rounded-cell border border-line bg-bg">
         <div className="flex h-10 items-center gap-3 border-b border-line-soft px-3">
           <Skeleton className="h-3 w-9" />
           <Skeleton className="h-3 w-40" />

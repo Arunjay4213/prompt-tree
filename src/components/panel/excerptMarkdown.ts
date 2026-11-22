@@ -8,11 +8,49 @@ const WRAPPING_ANCESTORS = new Set(["STRONG", "B", "EM", "I", "DEL", "S", "CODE"
 const STRUCTURAL = new Set(["UL", "OL", "TABLE", "THEAD", "TBODY", "TR"]);
 const BLOCKS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "UL", "OL", "LI", "PRE", "BLOCKQUOTE", "TABLE", "THEAD", "TBODY", "TR", "DIV", "HR"]);
 
+// Attributes put on the answer's own elements for the length of one clone, so the clone still
+// knows what a partial selection leaves out: an ordered item's real number, a table's header row.
+const ITEM_NUMBER = "data-excerpt-number";
+const TABLE_HEADER = "data-excerpt-header";
+const CELL_COLUMN = "data-excerpt-column";
+const MARKS = [ITEM_NUMBER, TABLE_HEADER, CELL_COLUMN];
+
 export function selectionMarkdown(range: Range, answer: HTMLElement): string {
-  let content: Node = range.cloneContents();
+  const marked: Element[] = [];
+  for (const ol of answer.querySelectorAll("ol")) {
+    const start = Number(ol.getAttribute("start") ?? "1") || 1;
+    [...ol.children].forEach((li, i) => {
+      li.setAttribute(ITEM_NUMBER, String(start + i));
+      marked.push(li);
+    });
+  }
+  for (const table of answer.querySelectorAll("table")) {
+    const header = table.querySelector("tr");
+    if (!header?.querySelector("th")) continue;
+    table.setAttribute(TABLE_HEADER, JSON.stringify([...header.children].map((cell) => cellText(cell))));
+    marked.push(table);
+  }
+  for (const row of answer.querySelectorAll("tr")) {
+    [...row.children].forEach((cell, i) => {
+      cell.setAttribute(CELL_COLUMN, String(i));
+      marked.push(cell);
+    });
+  }
+  let content: Node;
+  try {
+    content = range.cloneContents();
+  } finally {
+    for (const el of marked) for (const name of MARKS) el.removeAttribute(name);
+  }
   const common = range.commonAncestorContainer;
   let el: Element | null = common instanceof Element ? common : common.parentElement;
-  if (el && el !== answer && STRUCTURAL.has(el.tagName)) content = wrapIn(el, content);
+  if (el && el !== answer && STRUCTURAL.has(el.tagName)) {
+    // Rows of one table: wrap them in their table, so they come out as a table with its header.
+    if (el.tagName !== "UL" && el.tagName !== "OL") {
+      for (; el && el.tagName !== "TABLE"; el = el.parentElement) content = wrapIn(el, content);
+    }
+    if (el) content = wrapIn(el, content);
+  }
   for (; el && el !== answer && answer.contains(el); el = el.parentElement) {
     if (WRAPPING_ANCESTORS.has(el.tagName)) content = wrapIn(el, content);
   }
@@ -22,10 +60,19 @@ export function selectionMarkdown(range: Range, answer: HTMLElement): string {
   return blockList(holder).join("\n\n").trim();
 }
 
+// A shallow copy of `original` around `content`. A table gets its header back on the copy.
 function wrapIn(original: Element, content: Node): Element {
   const wrapper = original.cloneNode(false) as Element;
+  if (original.tagName === "TABLE") {
+    const header = original.querySelector("tr");
+    if (header?.querySelector("th")) wrapper.setAttribute(TABLE_HEADER, JSON.stringify([...header.children].map((cell) => cellText(cell))));
+  }
   wrapper.append(content);
   return wrapper;
+}
+
+function cellText(cell: Element): string {
+  return blockList(cell).join(" ").replace(/\|/g, "\\|").trim();
 }
 
 function isBlock(node: Node): node is Element {
@@ -73,20 +120,25 @@ function block(el: Element): string {
   return blockList(el).join("\n\n");
 }
 
+// An ordered item keeps its number from the answer, also when the selection starts in the middle.
 function list(el: Element): string {
   const ordered = el.tagName === "OL";
   const start = Number(el.getAttribute("start") ?? "1") || 1;
   return [...el.children]
     .filter((li) => li.tagName === "LI")
-    .map((li, i) => listItem(li, ordered ? `${start + i}. ` : "- "))
+    .map((li, i) => listItem(li, ordered ? `${li.getAttribute(ITEM_NUMBER) ?? start + i}. ` : "- "))
     .filter((item) => item.trim() !== "")
     .join("\n");
 }
 
 // A list item: its marker, then its content; nested lines are indented under the marker.
+// An item whose own text was not selected (the selection starts inside its nested list) has
+// nothing to show: its nested items stand in its place instead of hanging under an empty bullet.
 function listItem(li: Element, marker: string): string {
   const body = blockList(li).join("\n");
   if (!body.trim()) return "";
+  const first = [...li.childNodes].find((n) => !(n.nodeType === Node.TEXT_NODE && !n.textContent?.trim()));
+  if (first instanceof Element && (first.tagName === "UL" || first.tagName === "OL")) return body;
   const indent = " ".repeat(marker.length);
   return body
     .split("\n")
@@ -101,21 +153,27 @@ function fence(pre: Element): string {
   return `\`\`\`${language}\n${text}\n\`\`\``;
 }
 
-// A whole table with a header row becomes a markdown table; a part of a table becomes plain
-// rows with the cells separated by " | ".
+// A table, whole or in part, becomes a markdown table: the table's own header row, then the
+// selected rows (a row cut by the selection keeps its place, with empty cells for what was left out).
+// Rows of a table without a header row stay plain rows with the cells separated by " | ".
 function table(el: Element): string {
   const rows = el.tagName === "TR" ? [el] : [...el.querySelectorAll("tr")];
-  const cells = rows.map((row) => [...row.children].map((cell) => blockList(cell).join(" ").replace(/\|/g, "\\|").trim()));
-  const hasHeader = rows[0]?.querySelector("th") !== null && rows.length > 1;
-  const width = cells[0]?.length ?? 0;
-  if (el.tagName === "TABLE" && hasHeader && cells.every((row) => row.length === width)) {
-    const line = (row: string[]) => `| ${row.join(" | ")} |`;
-    return [line(cells[0]!), line(cells[0]!.map(() => "---")), ...cells.slice(1).map(line)].join("\n");
+  const placed = (row: Element) => {
+    const out: string[] = [];
+    [...row.children].forEach((cell, i) => (out[Number(cell.getAttribute(CELL_COLUMN) ?? i)] = cellText(cell)));
+    return Array.from(out, (c) => c ?? "");
+  };
+  const cells = rows.map((row) => ({ header: row.querySelector("th") !== null, cells: placed(row) }));
+  const stored = el.getAttribute(TABLE_HEADER);
+  const header: string[] | null = cells[0]?.header ? cells[0].cells : stored ? (JSON.parse(stored) as string[]) : null;
+  const body = cells.filter((row) => !row.header && row.cells.some((c) => c !== "")).map((row) => row.cells);
+  if (header && body.length > 0) {
+    const width = header.length;
+    const line = (row: string[]) => `| ${Array.from({ length: width }, (_, i) => row[i] ?? "").join(" | ")} |`;
+    return [line(header), line(header.map(() => "---")), ...body.map(line)].join("\n");
   }
-  return cells
-    .map((row) => row.filter((c) => c !== "").join(" | "))
-    .filter((row) => row !== "")
-    .join("\n");
+  if (header) return header.join(" | ");
+  return body.map((row) => row.filter((c) => c !== "").join(" | ")).join("\n");
 }
 
 function inlineAll(el: Node): string {

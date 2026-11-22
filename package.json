@@ -25,12 +25,12 @@
     "@xyflow/react": "^13.0.2",
     "highlight.js": "^11.12.0",
     "hono": "^4.13.19",
+    "lowlight": "3.3.0",
     "lucide-react": "^1.77.0",
     "openai": "^7.62.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
-    "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "zustand": "^5.1.0"
   },

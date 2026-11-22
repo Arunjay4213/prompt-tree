@@ -21,6 +21,7 @@ import {
   edgePath,
   laneOffsets,
   fitViewport,
+  fitsAboveObstacles,
   portX,
   prefersReducedMotion,
   revealViewport,
@@ -31,6 +32,9 @@ import { cardInDirection, isArrowKey, isTypingTarget } from "./canvas/keyboard";
 import { Minimap } from "./canvas/Minimap";
 import { ThreadCard, type PathState } from "./ThreadCard";
 import { IconButton } from "./ui";
+
+// The card width for CSS (canvas.css and the loading skeleton), from the one constant in tree.ts.
+document.documentElement.style.setProperty("--card-width", `${tree.CARD_WIDTH}px`);
 
 // The height used for a card that is not measured yet. It is never painted at that size: cards
 // measure themselves before the first paint.
@@ -44,6 +48,10 @@ type CardPhase = "measuring" | "shown";
 type Position = { x: number; y: number };
 // A card gliding from one position to another, started at `start` (performance.now()).
 type Motion = { from: Position; to: Position; start: number; duration: number };
+// off:       the view stays where it is.
+// following: a card was revealed; when it grows (its answer streams in), the view pans to keep its
+//            bottom edge in view. `height` is the card height the view was last adjusted for.
+type Follow = { kind: "off" } | { kind: "following"; threadId: string; height: number };
 // What an edge needs to be redrawn while its cards glide.
 // laneX: the x of its vertical part, relative to the parent card.
 type Link = { id: string; parentId: string; portY: number; laneX: number };
@@ -274,6 +282,18 @@ function Flow({ convId }: { convId: string }) {
     void flow.setViewport(next, { duration: prefersReducedMotion() ? 0 : duration, ease: easeOutExpo, interpolate: "linear" });
   };
   const boxOf = (id: string): Box | undefined => boxes.find((b) => b.id === id);
+  // The minimap and the zoom controls cover the canvas: a revealed card must stay clear of them.
+  const obstacles = (): Box[] => {
+    const pane = gridRef.current?.getBoundingClientRect();
+    if (!pane) return [];
+    return [...(gridRef.current?.querySelectorAll(".pt-minimap, .pt-controls") ?? [])].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left - pane.left, y: r.top - pane.top, width: r.width, height: r.height };
+    });
+  };
+  // After a card is revealed, the view follows it while it grows (an answer streaming in), until
+  // the user pans or zooms, the card no longer fits, or another card is revealed.
+  const follow = useRef<Follow>({ kind: "off" });
 
   // On open, the root card is at the top left at zoom 1 (the default viewport). A remembered
   // selection deeper in the tree is brought into view instead, without motion.
@@ -286,21 +306,42 @@ function Flow({ convId }: { convId: string }) {
     if (!opened.current) {
       opened.current = true;
       const box = selectedId && selectedId !== tree.rootThread(conv).id ? boxOf(selectedId) : undefined;
-      if (box) moveView(revealViewport(box, flow.getViewport(), width, height), 0);
+      if (box) moveView(revealViewport(box, flow.getViewport(), width, height, obstacles()), 0);
     }
-    if (!viewRequest || viewRequest.tick <= handledTick.current) return;
-    handledTick.current = viewRequest.tick;
-    if (viewRequest.kind === "fit") {
-      moveView(fitViewport(boxes, width, height), VIEW_MS);
+    if (viewRequest && viewRequest.tick > handledTick.current) {
+      handledTick.current = viewRequest.tick;
+      if (viewRequest.kind === "fit") {
+        follow.current = { kind: "off" };
+        moveView(fitViewport(boxes, width, height), VIEW_MS);
+        return;
+      }
+      const box = boxOf(viewRequest.threadId);
+      if (!box) return;
+      const view = flow.getViewport();
+      follow.current = { kind: "following", threadId: viewRequest.threadId, height: box.height };
+      moveView(
+        viewRequest.kind === "reveal"
+          ? revealViewport(box, view, width, height, obstacles())
+          : centerViewport(box, view.zoom, width, height),
+        VIEW_MS,
+      );
       return;
     }
-    const box = boxOf(viewRequest.threadId);
-    if (!box) return;
+    // Following: the followed card grew. Keep its bottom edge in view; once it no longer fits,
+    // keep its top in view and stop following.
+    const f = follow.current;
+    if (f.kind !== "following") return;
+    const box = boxOf(f.threadId);
+    if (!box || f.threadId !== selectedId) {
+      follow.current = { kind: "off" };
+      return;
+    }
+    if (box.height === f.height) return;
+    follow.current = { ...f, height: box.height };
     const view = flow.getViewport();
-    moveView(
-      viewRequest.kind === "reveal" ? revealViewport(box, view, width, height) : centerViewport(box, view.zoom, width, height),
-      VIEW_MS,
-    );
+    if (!fitsAboveObstacles(box, view.zoom, height, obstacles())) follow.current = { kind: "off" };
+    // At once, like a chat view that sticks to its bottom: the card has already grown.
+    moveView(revealViewport(box, view, width, height, obstacles()), 0);
   });
 
   // ---------- the grid (and the edge width) follow pan and zoom without re-rendering ----------
@@ -311,8 +352,8 @@ function Flow({ convId }: { convId: string }) {
       if (!el) return;
       el.style.backgroundSize = `${24 * zoom}px ${24 * zoom}px`;
       el.style.backgroundPosition = `${x}px ${y}px`;
-      // Edges stay at least 1px wide on screen when zoomed out (see .pt-edge).
-      el.querySelector<SVGSVGElement>(".pt-edges")?.style.setProperty("--zoom", String(zoom));
+      // Edges and card lines stay at least 1px wide on screen when zoomed out (.pt-edge, .pt-card).
+      el.querySelector<HTMLElement>(".pt-scene")?.style.setProperty("--zoom", String(zoom));
     };
     apply(storeApi.viewportStore.getState());
     return storeApi.viewportStore.subscribe(apply);
@@ -324,8 +365,21 @@ function Flow({ convId }: { convId: string }) {
   latest.current = { conv, visible, layout, selectedId };
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
-      if (isTypingTarget(e.target) || document.querySelector("[role='dialog']")) return;
+      // The canvas keys act only with no modifier held (Shift extends a text selection), with no
+      // dialog open, and only for key presses on the page itself or inside the canvas column. A key
+      // pressed in the panel, the sidebar, the top bar or any control that uses arrows (the panel's
+      // resize handle, a clip's drag handle, a text field) belongs to that control.
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (document.querySelector("[role='dialog']")) return;
+      // Escape in a text field that did not use it (the composer) leaves the field for the canvas,
+      // so the canvas keys work again. The card selection stays.
+      if (e.key === "Escape" && isTypingTarget(e.target)) {
+        (e.target as HTMLElement).blur();
+        gridRef.current?.focus({ preventScroll: true });
+        return;
+      }
+      const onCanvas = e.target === document.body || (e.target instanceof Node && gridRef.current?.contains(e.target) === true);
+      if (!onCanvas || isTypingTarget(e.target)) return;
       const { conv, visible, layout, selectedId } = latest.current;
       if (!conv) return;
       if (e.key === "Escape") {
@@ -364,7 +418,7 @@ function Flow({ convId }: { convId: string }) {
       // Focus lands here when a dialog closes and its opener is gone (a deleted card's button).
       tabIndex={-1}
       data-focus-target="canvas"
-      className="pt-grid absolute inset-0 outline-none"
+      className="grid-surface absolute inset-0 outline-none"
       // React Flow cancels the default of a press on the canvas, so the browser would leave the
       // focus in the composer and the arrow keys would type there. Pressing the canvas leaves it.
       onPointerDownCapture={() => {
@@ -391,6 +445,11 @@ function Flow({ convId }: { convId: string }) {
         panActivationKeyCode={null}
         disableKeyboardA11y
         onPaneClick={() => selectThread(null)}
+        // A pan or zoom by the user (it has an input event; the app's own moves have none) ends
+        // the following of a growing card.
+        onMoveStart={(event) => {
+          if (event) follow.current = { kind: "off" };
+        }}
         attributionPosition="top-right"
         className="pt-flow"
       >

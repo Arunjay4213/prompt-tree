@@ -17,7 +17,7 @@ export const InheritedContext = memo(function InheritedContext({ threadId }: { t
   const turns = useStore(
     useShallow((s) => {
       const conv = selectOpenConversation(s);
-      return conv ? tree.inheritedTurns(conv, threadId).map((x) => x.turn) : NO_TURNS;
+      return conv ? tree.inheritedContext(conv, threadId).map((x) => x.turn) : NO_TURNS;
     }),
   );
   const numbers = useStore(
@@ -25,7 +25,7 @@ export const InheritedContext = memo(function InheritedContext({ threadId }: { t
       const conv = selectOpenConversation(s);
       if (!conv) return NO_TURNS;
       const all = tree.pathNumbers(conv);
-      return tree.inheritedTurns(conv, threadId).map((x) => all[x.thread.id] ?? "");
+      return tree.inheritedContext(conv, threadId).map((x) => all[x.thread.id] ?? "");
     }),
   );
   if (turns.length === 0) return null;
@@ -42,7 +42,7 @@ export const InheritedContext = memo(function InheritedContext({ threadId }: { t
         <span className="truncate">
           Inherited context · <span className="num">{plural(turns.length, "turn")}</span>
         </span>
-        <ChevronDown {...ICON} className={`shrink-0 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+        <ChevronDown {...ICON} className={`shrink-0 transition-transform duration-200 ease-out-expo ${expanded ? "rotate-180" : ""}`} />
       </button>
       {expanded && (
         <ol className="pb-2">

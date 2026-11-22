@@ -1,14 +1,13 @@
 import { Copy, Download, Paperclip, Square, TextSelect } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import type { Conversation, FinalOutput } from "../../shared/api";
-import { combine, selectOpenConversation, setOutputInstruction, showToast, stopCombine, useStore } from "../store";
-import { copyText, downloadText, plural } from "../text";
+import { combine, copyWithToast, selectOpenConversation, setOutputInstruction, stopCombine, useStore } from "../store";
+import { downloadText, plural } from "../text";
 import * as tree from "../tree";
 import { Markdown, useStreamText } from "./Markdown";
 import { ClipList } from "./panel/ClipList";
 import { Button, ICON, IconButton, Label, LabelSm, LiveDot, Skeleton } from "./ui";
 
-const copy = (text: string) => void copyText(text).then((ok) => showToast(ok ? "Copied" : "Copy failed"));
 
 // The Output tab: the clips in order, the Combine step, and the combined document.
 export function OutputPanel() {
@@ -30,7 +29,7 @@ export function OutputPanel() {
             <div className="mt-4">
               <ClipList conv={conv} />
             </div>
-            <Button size="sm" icon={Copy} className="mt-4" data-testid="copy-clips" onClick={() => copy(tree.clipsAsMarkdown(conv))}>
+            <Button size="sm" icon={Copy} className="mt-4" data-testid="copy-clips" onClick={() => copyWithToast(tree.clipsAsMarkdown(conv))}>
               Copy clips
             </Button>
             <Combine output={conv.output} />
@@ -59,7 +58,7 @@ function EmptyOutput() {
 
 function Combine({ output }: { output: FinalOutput }) {
   const ref = useRef<HTMLTextAreaElement>(null);
-  const running = output.status === "waiting" || output.status === "streaming";
+  const running = tree.outputInFlight(output);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -146,7 +145,7 @@ function CombinedDocument({ conv }: { conv: Conversation }) {
   const output = conv.output;
   const hasText = output.text.trim() !== "";
   const failed = output.status === "failed";
-  const text = useStreamText(output.text, output.status === "streaming" || output.status === "waiting");
+  const text = useStreamText(output.text, tree.outputInFlight(output));
 
   return (
     <section className="mt-8">
@@ -160,7 +159,7 @@ function CombinedDocument({ conv }: { conv: Conversation }) {
             label="Copy as markdown"
             data-testid="output-copy"
             disabledReason={hasText ? null : "Nothing to copy yet"}
-            onClick={() => copy(output.text)}
+            onClick={() => copyWithToast(output.text)}
           />
           <IconButton
             icon={Download}

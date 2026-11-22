@@ -13,7 +13,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ArrowDown, ArrowUp, GripVertical, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Clip, Conversation } from "../../../shared/api";
-import { moveClip, moveClipTo, removeClip, requestView, selectThread } from "../../store";
+import { moveClipTo, removeClip, requestView, selectThread } from "../../store";
 import { Markdown } from "../Markdown";
 import * as tree from "../../tree";
 import { ICON, IconButton, Tag, Tip } from "../ui";
@@ -134,8 +134,8 @@ function ClipCell({ conv, clip, index, count, pathNumber }: { conv: Conversation
           {clip.kind === "excerpt" && <Tag>Excerpt</Tag>}
           <span className="flex-1" />
           <span className="flex shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-            <IconButton icon={ArrowUp} label="Move up" disabledReason={index === 0 ? "Already first" : null} onClick={() => moveClip(clip.id, -1)} />
-            <IconButton icon={ArrowDown} label="Move down" disabledReason={index === count - 1 ? "Already last" : null} onClick={() => moveClip(clip.id, 1)} />
+            <IconButton icon={ArrowUp} label="Move up" disabledReason={index === 0 ? "Already first" : null} onClick={() => moveClipTo(clip.id, index - 1)} />
+            <IconButton icon={ArrowDown} label="Move down" disabledReason={index === count - 1 ? "Already last" : null} onClick={() => moveClipTo(clip.id, index + 1)} />
             <IconButton icon={X} label="Remove from output" tone="danger" onClick={() => removeClip(clip.id)} />
           </span>
         </div>

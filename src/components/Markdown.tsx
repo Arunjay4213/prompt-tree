@@ -1,10 +1,25 @@
 import { Copy } from "lucide-react";
 import { isValidElement, memo, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
+import bash from "highlight.js/lib/languages/bash";
+import c from "highlight.js/lib/languages/c";
+import cpp from "highlight.js/lib/languages/cpp";
+import css from "highlight.js/lib/languages/css";
+import diff from "highlight.js/lib/languages/diff";
+import go from "highlight.js/lib/languages/go";
+import java from "highlight.js/lib/languages/java";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import python from "highlight.js/lib/languages/python";
+import rust from "highlight.js/lib/languages/rust";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
+import { createLowlight } from "lowlight";
 import remarkGfm from "remark-gfm";
-import { showToast } from "../store";
-import { copyText } from "../text";
+import { copyWithToast } from "../store";
 import { IconButton } from "./ui";
 
 // Fenced code: a dark panel with a header strip that shows the language and a Copy button.
@@ -22,7 +37,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
           icon={Copy}
           label="Copy code"
           onClick={() => {
-            void copyText((codeRef.current?.textContent ?? "").replace(/\n$/, "")).then((ok) => showToast(ok ? "Copied" : "Copy failed"));
+            copyWithToast((codeRef.current?.textContent ?? "").replace(/\n$/, ""));
           }}
         />
       </div>
@@ -52,10 +67,37 @@ const components: Components = {
   img: ({ src, alt }) => <img src={typeof src === "string" ? src : undefined} alt={alt ?? ""} loading="lazy" />,
 };
 
+// Syntax colors for a fixed set of languages (and their aliases such as ts, sh, html, yml). Only
+// these grammars are bundled. Any other language, or a half-written name while an answer streams,
+// renders as plain code in the same block.
+const lowlight = createLowlight({ bash, c, cpp, css, diff, go, java, javascript, json, markdown, python, rust, sql, typescript, xml, yaml });
+
+type HastNode = { type: string; tagName?: string; value?: string; properties?: Record<string, unknown>; children?: HastNode[] };
+
+function textOf(node: HastNode): string {
+  return node.type === "text" ? (node.value ?? "") : (node.children ?? []).map(textOf).join("");
+}
+
+// A rehype step: the code element of each fenced block gets highlighted children.
+function highlightCode() {
+  const visit = (node: HastNode, parent: HastNode | null) => {
+    if (node.type === "element" && node.tagName === "code" && parent?.tagName === "pre") {
+      const classes = Array.isArray(node.properties?.className) ? (node.properties.className as unknown[]).map(String) : [];
+      const language = classes.find((name) => name.startsWith("language-"))?.slice("language-".length);
+      if (language && lowlight.registered(language)) {
+        node.children = lowlight.highlight(language, textOf(node)).children as HastNode[];
+        node.properties = { ...node.properties, className: ["hljs", ...classes] };
+      }
+      return;
+    }
+    for (const child of node.children ?? []) visit(child, node);
+  };
+  return (tree: HastNode) => visit(tree, null);
+}
+
 // Stable plugin lists, so React never sees new props for an unchanged answer.
-// rehype-highlight skips an unknown or half-written language name instead of throwing.
 const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeHighlight];
+const rehypePlugins = [highlightCode];
 
 // How often a streaming text is parsed and drawn again. Text arrives about 60 times a second;
 // parsing the whole markdown that often slows the canvas down while answers stream.

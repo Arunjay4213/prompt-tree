@@ -4,8 +4,37 @@ import tailwindcss from "@tailwindcss/vite";
 
 const serverPort = process.env.PORT ?? "8787";
 
+// A package directory under node_modules (pnpm keeps them under node_modules/.pnpm/.../node_modules).
+const pkg = (names: string) => new RegExp(`[\\\\/]node_modules[\\\\/](${names})[\\\\/]`);
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Vendor code in a few stable chunks, all loaded up front from index.html (nothing is lazy):
+  // React, the canvas library, the markdown and highlighting stack, and the rest.
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "react", test: pkg("react|react-dom|scheduler"), priority: 40 },
+            { name: "canvas", test: pkg("@xyflow|d3-[^\\\\/]+|classcat"), priority: 30 },
+            {
+              name: "markdown",
+              test: pkg(
+                "react-markdown|remark-[^\\\\/]+|rehype-[^\\\\/]+|micromark[^\\\\/]*|mdast-[^\\\\/]+|hast-[^\\\\/]+|hastscript|unist-[^\\\\/]+|unified|vfile[^\\\\/]*|lowlight|highlight\\.js|" +
+                  "bail|trough|devlop|zwitch|ccount|longest-streak|markdown-table|trim-lines|is-plain-obj|extend|" +
+                  "decode-named-character-reference|character-entities[^\\\\/]*|character-reference-invalid|is-[a-z-]+|" +
+                  "property-information|space-separated-tokens|comma-separated-tokens|html-url-attributes|" +
+                  "estree-util-[^\\\\/]+|style-to-[^\\\\/]+|inline-style-parser|web-namespaces|escape-string-regexp",
+              ),
+              priority: 20,
+            },
+            { name: "vendor", test: /[\\/]node_modules[\\/]/, priority: 10 },
+          ],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     strictPort: true,

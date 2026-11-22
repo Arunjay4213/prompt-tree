@@ -3,16 +3,6 @@
 
 /* ---------- surface ---------- */
 
-/* The 24px line grid on the surface color. Canvas.tsx sets background-size and -position from
-   the viewport, so the grid pans and zooms with the cards. */
-.pt-grid {
-  background-color: var(--color-surface);
-  background-image:
-    linear-gradient(to right, var(--color-line-soft) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--color-line-soft) 1px, transparent 1px);
-  background-size: 24px 24px;
-}
-
 .react-flow.pt-flow {
   --xy-background-color: transparent;
 }
@@ -74,7 +64,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  width: 380px;
+  width: var(--card-width);
   pointer-events: auto;
 }
 .pt-slot[data-phase="measuring"] {
@@ -93,7 +83,7 @@
 /* A 7px dot centered on the card's right border where a branch leaves. */
 .pt-port {
   position: absolute;
-  left: 376px;
+  left: calc(var(--card-width) - 4px);
   width: 7px;
   height: 7px;
   border-radius: 999px;
@@ -107,29 +97,39 @@
 
 /* ---------- card ---------- */
 
+/* The card line is a 1px border, topped up so it never looks thinner than 1 screen pixel when
+   zoomed out (--zoom is set by Canvas.tsx). The top-up is a zero-blur box-shadow spread: a plain
+   line just outside the border that takes no layout space (the card's measured size never
+   changes) and, unlike an outline, is not rounded to whole pixels. The selected card adds a
+   half-pixel outline for its 1.5px line. */
 .pt-card {
+  --card-line: var(--color-line);
+  --card-line-extra: max(0px, calc(1px / var(--zoom, 1) - 1px));
   position: relative;
-  width: 380px;
+  width: var(--card-width);
   background: var(--color-bg);
-  border: 1px solid var(--color-line);
+  border: 1px solid var(--card-line);
+  box-shadow: 0 0 0 var(--card-line-extra) var(--card-line);
   border-radius: var(--radius-cell);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
-  transition: border-color 150ms ease;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 .pt-card[data-kind="empty"] {
   border-style: dashed;
 }
 .pt-card[data-path-state="normal"]:hover {
-  border-color: var(--color-faint);
+  --card-line: var(--color-faint);
 }
 .pt-card[data-path-state="path"] {
-  border-color: var(--color-fg);
+  --card-line: var(--color-fg);
 }
-/* 1.5px in total: the 1px border plus half a pixel outside it, so the card keeps its size. */
 .pt-card[data-path-state="selected"] {
-  border-color: var(--color-fg);
+  --card-line: var(--color-fg);
+  --card-line-extra: max(0px, calc(1.5px / var(--zoom, 1) - 1px));
   outline: 0.5px solid var(--color-fg);
   outline-offset: 0;
 }
@@ -141,7 +141,7 @@
 /* Rounded at the bottom like the card, so a clipped row's accent bar follows the corner. */
 .pt-body {
   overflow: hidden;
-  border-radius: 0 0 5px 5px;
+  border-radius: 0 0 calc(var(--radius-cell) - 1px) calc(var(--radius-cell) - 1px);
 }
 
 .pt-row {
@@ -249,7 +249,7 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  border-radius: 5px;
+  border-radius: calc(var(--radius-cell) - 1px);
   background: var(--color-bg);
   opacity: 0;
   pointer-events: none;
@@ -278,10 +278,10 @@
   border-radius: 0;
 }
 .pt-controls .icon-btn:first-child {
-  border-radius: 5px 5px 0 0;
+  border-radius: calc(var(--radius-cell) - 1px) calc(var(--radius-cell) - 1px) 0 0;
 }
 .pt-controls .icon-btn:last-child {
-  border-radius: 0 0 5px 5px;
+  border-radius: 0 0 calc(var(--radius-cell) - 1px) calc(var(--radius-cell) - 1px);
 }
 .pt-controls .icon-btn + .icon-btn {
   border-top: 1px solid var(--color-line-soft);
@@ -309,7 +309,8 @@
 .pt-row-action:not([aria-disabled="true"]):hover {
   background: var(--color-surface);
 }
-/* A selected new branch keeps its dashed border: fg, without the solid half-pixel outline. */
+/* A selected new branch keeps its dashed 1px line: no solid half-pixel outline. */
 .pt-card[data-kind="empty"][data-path-state="selected"] {
   outline: none;
+  --card-line-extra: max(0px, calc(1px / var(--zoom, 1) - 1px));
 }

@@ -69,9 +69,10 @@ function rounded(v: ViewportValue): ViewportValue {
   return { x: Math.round(v.x), y: Math.round(v.y), zoom: v.zoom };
 }
 
-// The smallest pan (no zoom change) that brings the box fully into view. When the box is larger
-// than the view, its top or left edge is shown. Returns null when no pan is needed.
-export function revealViewport(box: Box, view: ViewportValue, width: number, height: number): ViewportValue | null {
+// The smallest pan (no zoom change) that brings the box fully into view, clear of the obstacles
+// (the minimap and the zoom controls, in screen pixels relative to the canvas) by REVEAL_MARGIN.
+// When the box is larger than the view, its top or left edge is shown. Null when no pan is needed.
+export function revealViewport(box: Box, view: ViewportValue, width: number, height: number, obstacles: Box[]): ViewportValue | null {
   const shift = (start: number, size: number, viewSize: number) => {
     const s = start * view.zoom;
     const e = (start + size) * view.zoom;
@@ -83,9 +84,29 @@ export function revealViewport(box: Box, view: ViewportValue, width: number, hei
     return 0;
   };
   const dx = shift(box.x + view.x / view.zoom, box.width, width);
-  const dy = shift(box.y + view.y / view.zoom, box.height, height);
+  let dy = shift(box.y + view.y / view.zoom, box.height, height);
+  // The box on screen after that pan. If it comes near an obstacle, move it up above the obstacle,
+  // as long as its top stays in view.
+  const left = box.x * view.zoom + view.x + dx;
+  const right = left + box.width * view.zoom;
+  for (const o of obstacles) {
+    const top = box.y * view.zoom + view.y + dy;
+    const bottom = top + box.height * view.zoom;
+    const overlaps =
+      left < o.x + o.width + REVEAL_MARGIN && right > o.x - REVEAL_MARGIN && bottom > o.y - REVEAL_MARGIN && top < o.y + o.height + REVEAL_MARGIN;
+    if (!overlaps) continue;
+    const up = o.y - REVEAL_MARGIN - bottom;
+    dy += Math.max(up, REVEAL_MARGIN - top);
+  }
   if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return null;
   return rounded({ x: view.x + dx, y: view.y + dy, zoom: view.zoom });
+}
+
+// Whether the box, at the given zoom, fits in the view between the top margin and the highest
+// obstacle it would have to clear (used to stop following a growing card).
+export function fitsAboveObstacles(box: Box, zoom: number, height: number, obstacles: Box[]): boolean {
+  const lowest = Math.min(height, ...obstacles.map((o) => o.y));
+  return box.height * zoom <= lowest - 2 * REVEAL_MARGIN;
 }
 
 // Centers the box without changing the zoom. A box taller than the view shows its top.

@@ -48,7 +48,8 @@ const EdgePath = memo(function EdgePath({ id, d, onPath, bornAt }: EdgeLine) {
         { strokeDasharray: "1 1", strokeDashoffset: 1 },
         { strokeDasharray: "1 1", strokeDashoffset: 0 },
       ],
-      { duration: DRAW_MS, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+      // The easing token from index.css, the same curve as every other canvas motion.
+      { duration: DRAW_MS, easing: getComputedStyle(el).getPropertyValue("--ease-out-expo").trim() || "ease-out" },
     );
     animation.currentTime = Math.max(0, age);
     return () => animation.cancel();

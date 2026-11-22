@@ -73,6 +73,8 @@ The numbers are computed from the tree, never stored.
 
 ### Titles
 
+- The conversation's title and the root thread's title are one title. Renaming either changes both.
+- A title cut from a prompt uses the user's own words, not a quoted selection, and is cut at a word boundary.
 - A title has a source: `prompt` (cut from the first prompt), `model` (a 2 to 5 word title the model wrote), or `user` (typed by the user).
 - In live mode, when the first turn of a thread finishes and its title source is still `prompt`, the app asks the model for a short title and applies it if the source is still `prompt` at that moment.
 - A title typed by the user is never replaced. Conversations saved before title sources existed count as `user`.
@@ -81,6 +83,8 @@ The numbers are computed from the tree, never stored.
 
 ### Canvas
 
+- Canvas keys (arrows, F, Enter, Escape) act only when no modifier is held and the focus is on the page or the canvas, never while another control is using those keys.
+- A revealed card ends up clear of the minimap and the zoom controls. While the selected card grows with a streaming answer, the view follows its bottom edge until the user moves the view.
 - The tree grows left to right. Positions always come from the layout function. Cards are not draggable. The canvas pans and zooms.
 - A branch card is placed so that its header lines up with the turn it leaves from whenever there is room, so the first branch of a turn connects with a straight line. Later branches stack below without overlap.
 - Selecting a card marks it and the path of cards and edges back to the root. That path is exactly the context the model sees.
@@ -94,7 +98,7 @@ The numbers are computed from the tree, never stored.
 - Selecting text inside an answer offers "Add to output" (an excerpt clip) and "Branch with selection" (a new branch whose prompt box starts with the selection as a quote).
 - An excerpt keeps its markdown (bold, lists, code blocks with their language) and never includes interface text such as a code block's language label.
 - The same excerpt cannot be added twice. Retrying a turn removes that turn's excerpt clips, because their text came from the old answer.
-- Each thread has its own unsent draft. Text typed for one card never moves to another card. A discarded branch takes its draft with it.
+- Each thread has its own unsent draft. Text typed for one card never moves to another card. A discarded branch takes its draft with it. Drafts are kept in the browser's local storage, so they survive a reload.
 - Clearing a title and confirming cancels the rename.
 
 ### Rules that keep the tree valid
@@ -116,3 +120,6 @@ The numbers are computed from the tree, never stored.
 - Every save says which stored version it is based on (`X-Base-Version`). The server refuses a save based on an old version with 409.
 - A refused save puts the conversation into a named conflict state: saving stops, and a bar offers "Load the other version" or "Keep this tab's version" (or "Keep it" / "Close it" when it was deleted elsewhere). Nothing is ever overwritten silently.
 - A save that fails for another reason is retried every 5 seconds until it works. Pending saves are flushed when the page is hidden.
+- A tab that only reads a conversation never saves it. Repairs made on load (an interrupted turn shown as stopped) are not written back.
+- A conflict or a failed save on a conversation that is not open is shown on its row in the sidebar.
+- Leaving the page while a conversation is in conflict, or has a failed save, asks for confirmation first.

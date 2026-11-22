@@ -6,7 +6,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { LucideIcon } from "lucide-react";
-import { useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactElement, type ReactNode, type Ref } from "react";
+import { useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from "react";
 import { useStore } from "../store";
 
 // Size and stroke for every lucide icon: <Icon {...ICON} />.
@@ -24,11 +24,9 @@ export function TipProvider({ children }: { children: ReactNode }) {
 // A tooltip on any element that accepts a ref (buttons, links, focusable spans). No content: no tooltip.
 export function Tip({
   content,
-  side = "top",
   children,
 }: {
   content: ReactNode;
-  side?: "top" | "right" | "bottom" | "left";
   children: ReactElement;
 }) {
   if (content === null || content === undefined || content === "") return children;
@@ -37,7 +35,7 @@ export function Tip({
       <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
-          side={side}
+          side="top"
           sideOffset={6}
           collisionPadding={8}
           className="tooltip z-50 max-w-[280px] rounded-cell bg-fg px-2 py-[5px] font-mono text-[10.5px] leading-[1.45] tracking-[0.08em] text-bg uppercase"
@@ -56,7 +54,6 @@ type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "disabled"> & {
   keyHint?: string; // shown after the text as a mono small label, for example "ENTER"
   tip?: string; // tooltip while enabled
   disabledReason?: string | null; // set: the button is disabled and this is its tooltip
-  ref?: Ref<HTMLButtonElement>;
 };
 
 // A text button. primary for the one main action, secondary for the rest, danger for deleting,
@@ -98,7 +95,6 @@ type IconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "disabled" 
   active?: boolean; // a toggle that is on; omit for plain buttons
   tone?: "default" | "accent" | "danger"; // accent: active color is orange (clip toggle); danger: red on hover
   disabledReason?: string | null;
-  ref?: Ref<HTMLButtonElement>;
 };
 
 // A 28 by 28 icon-only button with a tooltip.
@@ -140,19 +136,19 @@ export function Tag({
   children,
 }: {
   variant?: "default" | "output";
-  dot?: "pass" | "accent" | "fail" | "live";
+  dot?: "accent" | "fail";
   className?: string;
   children: ReactNode;
 }) {
   return (
     <span className={`tag ${variant === "output" ? "tag-output" : ""} ${className}`}>
-      {dot === "live" ? <LiveDot /> : dot && <span className={`dot ${DOT_COLOR[dot]}`} aria-hidden />}
+      {dot && <span className={`dot ${DOT_COLOR[dot]}`} aria-hidden />}
       {children}
     </span>
   );
 }
 
-const DOT_COLOR = { pass: "bg-pass", accent: "bg-accent", fail: "bg-fail" } as const;
+const DOT_COLOR = { accent: "bg-accent", fail: "bg-fail" } as const;
 
 // Mono uppercase label (11px) for section names and metadata.
 export function Label({ className = "", children }: { className?: string; children: ReactNode }) {
@@ -165,8 +161,8 @@ export function LabelSm({ className = "", children }: { className?: string; chil
 }
 
 // The pulsing 6px accent dot: something is being written right now.
-export function LiveDot({ className = "" }: { className?: string }) {
-  return <span className={`dot live-dot ${className}`} aria-hidden />;
+export function LiveDot() {
+  return <span className="dot live-dot" aria-hidden />;
 }
 
 // A surface-colored placeholder bar shown while something loads. Size it with classes.

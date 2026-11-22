@@ -12,6 +12,7 @@ import {
 } from "../store";
 import { plural } from "../text";
 import * as tree from "../tree";
+import { serverMode, type ServerMode } from "./serverMode";
 import { useSidebarDisplay } from "./Sidebar";
 import { IconButton, Label, LabelSm, Tag, Tip } from "./ui";
 
@@ -132,10 +133,10 @@ export function TopBar() {
         {mode && (
           <>
             <span data-size="tag-full" className="inline-flex shrink-0">
-              <Tag dot={mode.dot}>{mode.text}</Tag>
+              <Tag dot={mode.dot === "bg-fail" ? "fail" : "accent"}>{mode.tag}</Tag>
             </span>
             <span data-size="tag-short" className="inline-flex shrink-0">
-              <Tag dot={mode.dot}>{mode.short}</Tag>
+              <Tag dot={mode.dot === "bg-fail" ? "fail" : "accent"}>{mode.short}</Tag>
             </span>
           </>
         )}
@@ -147,36 +148,47 @@ export function TopBar() {
   );
 }
 
-type TitleMode = { kind: "showing" } | { kind: "editing"; draft: string };
+// viewing: the title is shown as a button.
+// editing: the title is an input holding the draft.
+// Leaving editing is one of two named steps: save (Enter, or the field losing focus) renames when
+// the draft is not empty and differs; cancel (Escape) never renames. Once the editor is back in
+// viewing, a late blur from the removed input finds nothing to save.
+type TitleMode = { kind: "viewing" } | { kind: "editing"; draft: string };
+const VIEWING: TitleMode = { kind: "viewing" };
 
-// Click to edit in place. Enter saves, Escape cancels, leaving the field saves.
-// An empty title cancels the rename (the old title stays).
 function TitleEditor({ title, rawTitle }: { title: string; rawTitle: string }) {
-  const [mode, setMode] = useState<TitleMode>({ kind: "showing" });
-  // Escape must win over the blur that removing the focused input can fire.
-  const escaped = useRef(false);
+  const [mode, setModeState] = useState<TitleMode>(VIEWING);
+  // The same state, readable at once by the event that follows a change (the blur after Escape).
+  const current = useRef<TitleMode>(VIEWING);
+  const setMode = (next: TitleMode) => {
+    current.current = next;
+    setModeState(next);
+  };
+  const startEditing = () => setMode({ kind: "editing", draft: rawTitle });
+  const save = () => {
+    const m = current.current;
+    if (m.kind !== "editing") return;
+    setMode(VIEWING);
+    const draft = m.draft.trim();
+    if (draft !== "" && draft !== rawTitle.trim()) renameConversation(draft);
+  };
+  const cancel = () => {
+    if (current.current.kind === "editing") setMode(VIEWING);
+  };
 
-  if (mode.kind === "showing") {
+  if (mode.kind === "viewing") {
     return (
       <Tip content="Rename">
         <button
           type="button"
           className="h-8 min-w-[120px] shrink truncate rounded-cell px-2 text-left text-[14px] font-medium tracking-[-0.005em] transition-colors hover:bg-surface"
-          onClick={() => {
-            escaped.current = false;
-            setMode({ kind: "editing", draft: rawTitle });
-          }}
+          onClick={startEditing}
         >
           {title}
         </button>
       </Tip>
     );
   }
-  const commit = () => {
-    if (!escaped.current && mode.draft.trim() !== "") renameConversation(mode.draft);
-    escaped.current = true; // the blur that follows must not commit again
-    setMode({ kind: "showing" });
-  };
   return (
     <input
       autoFocus
@@ -184,13 +196,10 @@ function TitleEditor({ title, rawTitle }: { title: string; rawTitle: string }) {
       value={mode.draft}
       onChange={(e) => setMode({ kind: "editing", draft: e.target.value })}
       onFocus={(e) => e.currentTarget.select()}
-      onBlur={commit}
+      onBlur={save}
       onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        if (e.key === "Escape") {
-          escaped.current = true;
-          setMode({ kind: "showing" });
-        }
+        if (e.key === "Enter") save();
+        if (e.key === "Escape") cancel();
       }}
       className="h-8 w-[min(480px,100%)] min-w-[120px] shrink rounded-cell border border-fg bg-bg px-2 text-[14px] font-medium tracking-[-0.005em] outline-none"
     />
@@ -230,29 +239,19 @@ function SaveState({ save, dot }: { save: SaveState; dot: boolean }) {
   );
 }
 
-// The server mode shown as a tag: demo, no key, or offline. Null when the model is live.
-type ModeInfo = { dot: "accent" | "fail"; text: string; short: string; tip: string };
-
-function useMode(): ModeInfo | null {
+// The server mode as a tag (demo, no key, offline), from the table in serverMode.ts. Null when the
+// model is live or the mode is not known yet.
+function useMode(): ServerMode | null {
   const health = useStore((s) => s.health);
-  if (health.kind === "unreachable") {
-    return { dot: "fail", text: "Server offline", short: "Offline", tip: "The server is not reachable. Start it with pnpm dev and reload" };
-  }
-  if (health.kind !== "ready") return null;
-  if (health.health.mode === "demo") {
-    return { dot: "accent", text: "Demo - placeholder answers", short: "Demo", tip: "Demo - placeholder answers. Started with pnpm dev:demo: no model is called and nothing is spent" };
-  }
-  if (health.health.mode === "no_key") {
-    return { dot: "fail", text: "No API key", short: "No key", tip: "No API key. Put OPENAI_API_KEY in the .env file and restart the server" };
-  }
-  return null;
+  const mode = serverMode(health);
+  return mode.tag === "" ? null : mode;
 }
 
-function ModeTag({ mode, short }: { mode: ModeInfo; short: boolean }) {
+function ModeTag({ mode, short }: { mode: ServerMode; short: boolean }) {
   return (
     <Tip content={mode.tip}>
       <span tabIndex={0} data-testid="topbar-mode" className="inline-flex shrink-0 rounded-cell">
-        <Tag dot={mode.dot}>{short ? mode.short : mode.text}</Tag>
+        <Tag dot={mode.dot === "bg-fail" ? "fail" : "accent"}>{short ? mode.short : mode.tag}</Tag>
       </span>
     </Tip>
   );

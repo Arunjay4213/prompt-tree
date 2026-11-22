@@ -6,6 +6,7 @@
 import { create } from "zustand";
 import type { ChatMessage, Conversation, ConversationSummary, Health, StreamEvent, Thread } from "../shared/api";
 import * as api from "./api";
+import { copyText } from "./text";
 import * as tree from "./tree";
 
 export type HealthState = { kind: "loading" } | { kind: "ready"; health: Health } | { kind: "unreachable" };
@@ -34,7 +35,7 @@ export type ViewRequest =
   | { kind: "center"; threadId: string; tick: number }
   | { kind: "fit"; tick: number };
 // "hidden" keeps the last text so the toast can fade out with it.
-export type ToastState = { kind: "hidden"; text: string } | { kind: "shown"; text: string; id: number };
+export type ToastState = { kind: "hidden"; text: string } | { kind: "shown"; text: string };
 
 export const PANEL_MIN_WIDTH = 380;
 export const PANEL_MAX_WIDTH = 720;
@@ -52,7 +53,7 @@ type State = {
   saveStates: Record<string, SaveState>;
   selectedThreadId: string | null; // a thread of the open conversation
   tab: PanelTab;
-  drafts: Record<string, string>; // the composer text of each thread, by thread id; memory only
+  drafts: Record<string, string>; // the composer text of each thread, by thread id (also kept in localStorage)
   composerFocusTick: number;
   viewRequest: ViewRequest | null;
   sidebar: SidebarView;
@@ -125,11 +126,6 @@ export function selectOpenConversation(s: State): Conversation | undefined {
   return s.openId === null ? undefined : s.conversations[s.openId];
 }
 
-export function selectSelectedThread(s: State): Thread | undefined {
-  const conv = selectOpenConversation(s);
-  return conv && s.selectedThreadId ? tree.findThread(conv, s.selectedThreadId) : undefined;
-}
-
 export function selectOpenSaveState(s: State): SaveState {
   return s.openId === null ? SAVED : (s.saveStates[s.openId] ?? SAVED);
 }
@@ -175,24 +171,24 @@ function openConversationNow(): Conversation | undefined {
 
 // ---------- saving, per conversation ----------
 
-// retry: after a failed save, the next attempt runs on its own every SAVE_RETRY_MS until one succeeds.
-type SaveSlot = {
-  timer: ReturnType<typeof setTimeout> | null;
-  timerKind: "edit" | "stream";
-  retry: ReturnType<typeof setTimeout> | null;
-  chain: Promise<void>;
-};
+type Handle = ReturnType<typeof setTimeout>;
+// The delayed save: none due, one after an edit (500 ms), or one while text streams (2 s).
+type SaveTimer = { kind: "none" } | { kind: "edit"; handle: Handle } | { kind: "stream"; handle: Handle };
+// After a failed save, the next attempt runs on its own every SAVE_RETRY_MS until one succeeds.
+type RetryTimer = { kind: "none" } | { kind: "waiting"; handle: Handle };
+type SaveSlot = { timer: SaveTimer; retry: RetryTimer; chain: Promise<void> };
+const NO_TIMER = { kind: "none" } as const;
 const SAVE_RETRY_MS = 5000;
 const saveSlots = new Map<string, SaveSlot>();
-// The stored version each conversation's next save is based on (sent as X-Base-Version): set when
-// it is loaded and after each successful save. Missing means "new" (never loaded or saved here).
+// The stored version each cached conversation's next save is based on (sent as X-Base-Version):
+// "new" for a conversation made in this tab, else the updatedAt it was loaded with or last saved as.
 const baseVersions = new Map<string, api.BaseVersion>();
 const unsaved = new Set<string>(); // ids with changes that no save has picked up yet
 
 function slotFor(id: string): SaveSlot {
   let slot = saveSlots.get(id);
   if (!slot) {
-    slot = { timer: null, timerKind: "edit", retry: null, chain: Promise.resolve() };
+    slot = { timer: NO_TIMER, retry: NO_TIMER, chain: Promise.resolve() };
     saveSlots.set(id, slot);
   }
   return slot;
@@ -217,24 +213,25 @@ function markChanged(id: string, kind: SaveKind) {
 }
 
 function clearSaveTimer(slot: SaveSlot) {
-  if (slot.timer !== null) clearTimeout(slot.timer);
-  slot.timer = null;
+  if (slot.timer.kind !== "none") clearTimeout(slot.timer.handle);
+  slot.timer = NO_TIMER;
 }
 
 function clearRetryTimer(slot: SaveSlot) {
-  if (slot.retry !== null) clearTimeout(slot.retry);
-  slot.retry = null;
+  if (slot.retry.kind !== "none") clearTimeout(slot.retry.handle);
+  slot.retry = NO_TIMER;
 }
 
 // One retry timer per conversation. It only saves if the conversation still exists and still has
 // changes that no other save has picked up.
 function scheduleRetry(id: string) {
   const slot = slotFor(id);
-  if (slot.retry !== null) return;
-  slot.retry = setTimeout(() => {
-    slot.retry = null;
+  if (slot.retry.kind === "waiting") return;
+  const handle = setTimeout(() => {
+    slot.retry = NO_TIMER;
     if (get().conversations[id] && unsaved.has(id) && !inConflict(id)) saveNow(id);
   }, SAVE_RETRY_MS);
+  slot.retry = { kind: "waiting", handle };
 }
 
 function scheduleSave(id: string, kind: SaveKind) {
@@ -245,20 +242,16 @@ function scheduleSave(id: string, kind: SaveKind) {
     return;
   }
   if (kind === "stream") {
-    if (slot.timer === null) {
-      slot.timerKind = "stream";
-      slot.timer = setTimeout(() => fireSave(id), 2000);
-    }
+    if (slot.timer.kind === "none") slot.timer = { kind: "stream", handle: setTimeout(() => fireSave(id), 2000) };
     return;
   }
-  if (slot.timer !== null && slot.timerKind === "stream") return; // a save is already due soon
+  if (slot.timer.kind === "stream") return; // a save is already due soon
   clearSaveTimer(slot);
-  slot.timerKind = "edit";
-  slot.timer = setTimeout(() => fireSave(id), 500);
+  slot.timer = { kind: "edit", handle: setTimeout(() => fireSave(id), 500) };
 }
 
 function fireSave(id: string) {
-  slotFor(id).timer = null;
+  slotFor(id).timer = NO_TIMER;
   saveNow(id);
 }
 
@@ -275,9 +268,11 @@ function saveNow(id: string, keepalive = false) {
       setSaveState(id, SAVED);
       return;
     }
+    const base = baseVersions.get(id);
+    if (base === undefined) return; // every cached conversation has a base version; nothing to save otherwise
     const stamped = { ...conv, updatedAt: Date.now() };
     try {
-      const result = await api.saveConversation(stamped, baseVersions.get(id) ?? "new", keepalive);
+      const result = await api.saveConversation(stamped, base, keepalive);
       if (result.kind === "conflict") {
         // Another tab or window saved a newer version, or deleted it: stop saving and ask.
         unsaved.add(id);
@@ -470,7 +465,8 @@ export async function reloadList() {
 }
 
 // Leaving the open conversation: an empty selected branch is discarded, the selection is
-// remembered for when it opens again, and a blank conversation that was never stored is dropped.
+// remembered for when it opens again, and a blank conversation that was never stored is dropped,
+// unless its start box holds typed text (then "New conversation" brings it back).
 const lastSelection = new Map<string, string>();
 
 function leaveOpenConversation() {
@@ -481,7 +477,9 @@ function leaveOpenConversation() {
   const conv = get().conversations[id];
   if (!conv) return;
   if (selected && tree.findThread(conv, selected)) lastSelection.set(id, selected);
-  if (tree.isBlank(conv) && !inList(id)) {
+  if (tree.isBlank(conv) && !inList(id) && !get().drafts[tree.rootThread(conv).id]) {
+    dropDrafts(conv.threads.map((t) => t.id));
+    baseVersions.delete(id);
     set((s) => {
       const { [id]: _dropped, ...conversations } = s.conversations;
       return { conversations };
@@ -524,9 +522,11 @@ export async function openConversation(id: string) {
     }
     if (!inList(id)) return; // deleted while it was loading
     baseVersions.set(id, result.conversation.updatedAt);
+    // Repairs made on load (an interrupted turn shown as stopped) are not saved: they are made again
+    // on every load, and saving them from a tab that only reads would overwrite another tab's answer.
     const conversation = tree.recoverConversation(result.conversation);
     set((s) => ({ conversations: { ...s.conversations, [id]: conversation } }));
-    if (conversation !== result.conversation) markChanged(id, "edit");
+    restoreDrafts(conversation);
     if (stillLoading()) showConversation(id);
   } catch (err) {
     if (stillLoading()) {
@@ -557,7 +557,15 @@ export function newConversation() {
     return;
   }
   leaveOpenConversation();
+  const kept = Object.values(get().conversations).find((c) => tree.isBlank(c) && !inList(c.id));
+  if (kept) {
+    set({ tab: "thread" });
+    showConversation(kept.id);
+    focusComposer();
+    return;
+  }
   const conv = tree.createConversation(Date.now());
+  baseVersions.set(conv.id, "new");
   set((s) => ({ conversations: { ...s.conversations, [conv.id]: conv }, tab: "thread" }));
   showConversation(conv.id);
   focusComposer();
@@ -567,6 +575,7 @@ export function newConversation() {
 // its streams, and any save in flight. Only then is DELETE sent, so a late PUT never recreates it.
 export async function deleteConversation(id: string) {
   await forgetConversation(id);
+  removeStoredDrafts(id);
   try {
     await api.deleteConversation(id);
   } catch {
@@ -585,7 +594,7 @@ async function forgetConversation(id: string) {
   }
   unsaved.delete(id);
   abortStreamsOf(id);
-  dropDrafts(get().conversations[id]?.threads.map((t) => t.id) ?? []);
+  dropDrafts(get().conversations[id]?.threads.map((t) => t.id) ?? [], id);
   lastSelection.delete(id);
   baseVersions.delete(id);
   const wasOpen = get().openId === id;
@@ -618,21 +627,32 @@ export async function loadOtherVersion(id: string) {
     showToast("Could not load the other version");
     return;
   }
+  // While the GET ran, the conversation may have been closed or deleted here, or the user chose
+  // "Keep this tab's version": then the loaded copy is dropped.
+  const before = get().conversations[id];
+  if (!before || !inConflict(id)) return;
   if (result.kind === "missing") {
     setSaveState(id, { kind: "conflict", currentUpdatedAt: null });
     return;
   }
   const loaded = tree.recoverConversation(result.conversation);
-  const before = get().conversations[id];
   baseVersions.set(id, result.conversation.updatedAt);
   unsaved.delete(id);
   set((s) => ({ conversations: { ...s.conversations, [id]: loaded } }));
   setSaveState(id, SAVED);
-  dropDrafts((before?.threads ?? []).filter((t) => !tree.findThread(loaded, t.id)).map((t) => t.id));
-  const selected = get().selectedThreadId;
-  if (get().openId === id && (!selected || !tree.findThread(loaded, selected))) {
-    set({ selectedThreadId: tree.rootThread(loaded).id });
-  }
+  dropDrafts(before.threads.filter((t) => !tree.findThread(loaded, t.id)).map((t) => t.id), id);
+  if (get().openId === id) set({ selectedThreadId: drawnSelection(loaded, get().selectedThreadId) });
+}
+
+// The selection after the conversation changed under it: a thread that is gone gives the root,
+// a thread that is not drawn (its branches hidden above it) gives its nearest drawn ancestor.
+function drawnSelection(conv: Conversation, selected: string | null): string {
+  const root = tree.rootThread(conv).id;
+  if (!selected || !tree.findThread(conv, selected)) return root;
+  const drawn = new Set(tree.visibleThreads(conv).map((t) => t.id));
+  const path = tree.ancestorPath(conv, selected);
+  for (let i = path.length - 1; i >= 0; i--) if (drawn.has(path[i]!.id)) return path[i]!.id;
+  return root;
 }
 
 // "Keep this tab's version" (or "Keep it" when it was deleted elsewhere): save this copy over the
@@ -648,6 +668,7 @@ export function keepThisVersion(id: string) {
 
 // "Close it": the conversation was deleted elsewhere; drop it from this tab too.
 export function closeDeletedConversation(id: string) {
+  removeStoredDrafts(id);
   void forgetConversation(id);
 }
 
@@ -674,17 +695,20 @@ export function setPanelWidth(width: number) {
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
-let toastCount = 0;
 
 // One toast at a time; a new one replaces the current one.
 export function showToast(text: string) {
   if (toastTimer !== null) clearTimeout(toastTimer);
-  toastCount += 1;
-  set({ toast: { kind: "shown", text, id: toastCount } });
+  set({ toast: { kind: "shown", text } });
   toastTimer = setTimeout(() => {
     toastTimer = null;
     set({ toast: { kind: "hidden", text } });
   }, TOAST_MS);
+}
+
+// Copies text to the clipboard and says whether it worked.
+export function copyWithToast(text: string) {
+  void copyText(text).then((ok) => showToast(ok ? "Copied" : "Copy failed"));
 }
 
 // ---------- selection and view ----------
@@ -724,13 +748,16 @@ export function requestFit() {
   set((s) => ({ viewRequest: { kind: "fit", tick: (s.viewRequest?.tick ?? 0) + 1 } }));
 }
 
+// Drafts belong to threads of the open conversation.
 export function setDraft(threadId: string, text: string) {
   set((s) => ({ drafts: { ...s.drafts, [threadId]: text } }));
+  const id = get().openId;
+  if (id !== null) storeDraftsSoon(id);
 }
 
 // The drafts of threads that no longer exist (discarded, deleted, merged away, or their
-// conversation deleted) are dropped with them.
-function dropDrafts(threadIds: Iterable<string>) {
+// conversation deleted) are dropped with them. `conversationId` defaults to the open one.
+function dropDrafts(threadIds: Iterable<string>, conversationId = get().openId) {
   const drafts = { ...get().drafts };
   let changed = false;
   for (const id of threadIds) {
@@ -739,7 +766,74 @@ function dropDrafts(threadIds: Iterable<string>) {
       changed = true;
     }
   }
-  if (changed) set({ drafts });
+  if (!changed) return;
+  set({ drafts });
+  if (conversationId !== null) storeDraftsSoon(conversationId);
+}
+
+// ---------- drafts in localStorage ----------
+// One key per stored conversation: a map of thread id to draft text, written shortly after the last
+// change, removed when no draft is left. Only conversations on the server are kept (a blank one that
+// was never saved disappears when left, and its drafts with it).
+
+const DRAFTS_KEY_PREFIX = "prompt-tree:drafts:";
+const DRAFTS_WRITE_MS = 400;
+const draftWrites = new Map<string, Handle>();
+
+function storeDraftsSoon(conversationId: string) {
+  const pending = draftWrites.get(conversationId);
+  if (pending !== undefined) clearTimeout(pending);
+  draftWrites.set(
+    conversationId,
+    setTimeout(() => {
+      draftWrites.delete(conversationId);
+      storeDrafts(conversationId);
+    }, DRAFTS_WRITE_MS),
+  );
+}
+
+function storeDrafts(conversationId: string) {
+  const conv = get().conversations[conversationId];
+  if (!conv || !inList(conversationId)) return;
+  const map: Record<string, string> = {};
+  for (const t of conv.threads) {
+    const text = get().drafts[t.id];
+    if (text) map[t.id] = text;
+  }
+  try {
+    if (Object.keys(map).length === 0) localStorage.removeItem(DRAFTS_KEY_PREFIX + conversationId);
+    else localStorage.setItem(DRAFTS_KEY_PREFIX + conversationId, JSON.stringify(map));
+  } catch {
+    // storage unavailable; drafts then live only in memory
+  }
+}
+
+function removeStoredDrafts(conversationId: string) {
+  const pending = draftWrites.get(conversationId);
+  if (pending !== undefined) clearTimeout(pending);
+  draftWrites.delete(conversationId);
+  try {
+    localStorage.removeItem(DRAFTS_KEY_PREFIX + conversationId);
+  } catch {
+    // storage unavailable
+  }
+}
+
+// A loaded conversation gets its stored drafts back. Drafts of threads that no longer exist are
+// dropped from storage; a draft already typed in this tab wins over the stored one.
+function restoreDrafts(conv: Conversation) {
+  let stored: Record<string, unknown> = {};
+  try {
+    stored = JSON.parse(localStorage.getItem(DRAFTS_KEY_PREFIX + conv.id) ?? "{}") as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  const restored: Record<string, string> = {};
+  for (const [threadId, text] of Object.entries(stored)) {
+    if (typeof text === "string" && text !== "" && tree.findThread(conv, threadId)) restored[threadId] = text;
+  }
+  set((s) => ({ drafts: { ...restored, ...s.drafts } }));
+  if (Object.keys(restored).length !== Object.keys(stored).length) storeDrafts(conv.id);
 }
 
 // Asks the composer (or the start box) to take focus.
@@ -757,6 +851,7 @@ export function sendFirstPrompt(prompt: string) {
   const rootId = tree.rootThread(conv).id;
   const result = tree.appendTurn(conv, rootId, prompt, Date.now());
   writeConversation(conv.id, () => result.conv, "now");
+  setDraft(rootId, "");
   set({ selectedThreadId: rootId, tab: "thread" });
   writePref(PREF_LAST_CONVERSATION, conv.id);
   startTurnStream(conv.id, result.turnId);
@@ -859,10 +954,11 @@ export function mergeIntoParent(threadId: string) {
   if (!conv) return;
   const result = tree.mergeIntoParent(conv, threadId);
   writeConversation(conv.id, () => result.conv);
-  // The merged card's draft carries over to the card it joined, unless that one has its own.
+  // The merged card's draft joins the parent's: the parent's text, an empty line, then the child's.
   const draft = get().drafts[threadId] ?? "";
   if (result.threadId !== threadId) {
-    if (draft !== "" && !get().drafts[result.threadId]) setDraft(result.threadId, draft);
+    const parentDraft = get().drafts[result.threadId] ?? "";
+    if (draft !== "") setDraft(result.threadId, parentDraft !== "" ? `${parentDraft}\n\n${draft}` : draft);
     dropDrafts([threadId]);
   }
   set({ selectedThreadId: result.threadId });
@@ -902,10 +998,6 @@ export function addExcerptClip(threadId: string, turnId: string, text: string): 
 
 export function removeClip(clipId: string) {
   writeOpen((c) => tree.removeClip(c, clipId));
-}
-
-export function moveClip(clipId: string, delta: -1 | 1) {
-  writeOpen((c) => tree.moveClip(c, clipId, delta));
 }
 
 export function moveClipTo(clipId: string, toIndex: number) {
@@ -975,8 +1067,13 @@ export function stopCombine() {
   if (id !== null) streams.get(`output:${id}`)?.controller.abort();
 }
 
-// The page is being hidden (another tab, minimized, or about to close): every pending save runs
-// now instead of after its delay. Saves whose bodies fit in the keepalive budget may outlive the page.
+// Browsers cap the total body of keepalive requests in flight at 64 KB.
+const KEEPALIVE_BUDGET = 64 * 1024;
+
+// The page is being hidden or closed (visibilitychange to hidden, pagehide): every pending save runs
+// now, through the save queue, instead of after its delay. Saves whose bodies fit in the keepalive
+// budget can finish after the page is gone; larger ones are sent normally and may be cut off.
+// The next load recovers turns that were in flight.
 export function flushSavesOnHide() {
   flushText();
   let budget = KEEPALIVE_BUDGET;
@@ -992,30 +1089,8 @@ export function flushSavesOnHide() {
   }
 }
 
-// Leaving the page: best-effort save of every conversation with unsaved changes. The next load
-// recovers turns that were in flight. Browsers cap the total body of keepalive requests at 64 KB,
-// so only bodies that fit in what is left of that budget are sent.
-const KEEPALIVE_BUDGET = 64 * 1024;
-
-export function saveBeforeUnload() {
-  flushText();
-  let budget = KEEPALIVE_BUDGET;
-  for (const id of unsaved) {
-    const conv = get().conversations[id];
-    if (!conv || (tree.isBlank(conv) && !inList(id)) || inConflict(id)) continue;
-    const updatedAt = Date.now();
-    const body = JSON.stringify({ ...conv, updatedAt });
-    const size = new TextEncoder().encode(body).length;
-    if (size > budget) continue;
-    budget -= size;
-    const base = baseVersions.get(id) ?? "new";
-    // If the page stays (a restored tab), the next save is based on what this one wrote.
-    baseVersions.set(id, updatedAt);
-    void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Base-Version": api.baseVersionHeader(base) },
-      body,
-      keepalive: true,
-    }).catch(() => undefined);
-  }
+// Leaving now would lose work: a conversation is in conflict, or has a failed save with changes
+// not on the server. The page then asks the browser to confirm leaving.
+export function leavingLosesWork(): boolean {
+  return Object.entries(get().saveStates).some(([id, state]) => state.kind === "conflict" || (state.kind === "failed" && unsaved.has(id)));
 }

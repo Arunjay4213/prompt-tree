@@ -1,5 +1,5 @@
 import { ChevronsDownUp, ChevronsUpDown, Eye, EyeOff, Merge, Trash2 } from "lucide-react";
-import { Fragment, memo, useState } from "react";
+import { Fragment, memo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { Conversation, Thread } from "../../../shared/api";
 import { deleteThread, goToThread, mergeIntoParent, renameThread, selectOpenConversation, toggleBranchesView, toggleCardView, useStore } from "../../store";
@@ -129,7 +129,14 @@ function Breadcrumb({ crumbs, number }: { crumbs: Crumb[]; number: string }) {
 type TitleEdit = { kind: "viewing" } | { kind: "editing"; draft: string };
 
 function ThreadTitle({ threadId, title }: { threadId: string; title: string }) {
-  const [edit, setEdit] = useState<TitleEdit>({ kind: "viewing" });
+  const [edit, setEditState] = useState<TitleEdit>({ kind: "viewing" });
+  // The same state, readable at once by the blur that follows Enter or Escape (React has not
+  // re-rendered yet then): a blur saves only while the editor is still "editing".
+  const current = useRef<TitleEdit>(edit);
+  const setEdit = (next: TitleEdit) => {
+    current.current = next;
+    setEditState(next);
+  };
   const box = "mt-2 -mx-2 block h-9 w-[calc(100%+16px)] rounded-cell border px-2 text-[22px] font-medium tracking-[-0.02em]";
   const startEditing = () => setEdit({ kind: "editing", draft: title });
   // An empty title cancels the rename and keeps the old one.
@@ -148,7 +155,9 @@ function ThreadTitle({ threadId, title }: { threadId: string; title: string }) {
         aria-label="Thread title"
         onChange={(e) => setEdit({ kind: "editing", draft: e.target.value })}
         onFocus={(e) => e.currentTarget.select()}
-        onBlur={() => save(edit.draft)}
+        onBlur={() => {
+          if (current.current.kind === "editing") save(current.current.draft);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.nativeEvent.isComposing) save(edit.draft);
           if (e.key === "Escape") setEdit({ kind: "viewing" });
@@ -243,7 +252,9 @@ function Actions({ threadId, facts }: { threadId: string; facts: HeaderFacts }) 
         body={
           <>
             <LabelSm className="num mr-2 text-fg">{facts.number}</LabelSm>
-            {`"${facts.title.trim() || tree.UNTITLED_THREAD}"${below > 0 ? ` and the ${plural(below, "card")} below it` : ""} will be deleted, with their clips.`}
+            {below > 0
+              ? `"${facts.title.trim() || tree.UNTITLED_THREAD}", the ${plural(below, "card")} below it, and their clips will be deleted.`
+              : `"${facts.title.trim() || tree.UNTITLED_THREAD}" and its clips will be deleted.`}
           </>
         }
         confirmLabel="Delete"

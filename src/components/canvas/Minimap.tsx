@@ -5,6 +5,9 @@ import { useReactFlow, useViewportStore } from "@xyflow/react";
 import { useRef, type PointerEvent } from "react";
 import type { Box } from "./geometry";
 
+// idle: the pointer is not pressed on the minimap. dragging: the view follows that pointer.
+type MinimapDrag = { kind: "idle" } | { kind: "dragging"; pointerId: number };
+
 const WIDTH = 158;
 const HEIGHT = 108;
 const PAD = 8;
@@ -14,7 +17,7 @@ export function Minimap({ cards, selectedId }: { cards: (Box & { id: string })[]
   const paneWidth = useViewportStore((s) => s.width);
   const paneHeight = useViewportStore((s) => s.height);
   const flow = useReactFlow();
-  const dragging = useRef(false);
+  const drag = useRef<MinimapDrag>({ kind: "idle" });
 
   // The part of the flow in view, in flow coordinates.
   const view: Box = { x: -vx / zoom, y: -vy / zoom, width: paneWidth / zoom, height: paneHeight / zoom };
@@ -49,13 +52,15 @@ export function Minimap({ cards, selectedId }: { cards: (Box & { id: string })[]
       role="img"
       aria-label="Minimap. Click or drag to move the view."
       onPointerDown={(e) => {
-        dragging.current = true;
+        drag.current = { kind: "dragging", pointerId: e.pointerId };
         e.currentTarget.setPointerCapture(e.pointerId);
         moveTo(e);
       }}
-      onPointerMove={(e) => dragging.current && moveTo(e)}
-      onPointerUp={() => (dragging.current = false)}
-      onPointerCancel={() => (dragging.current = false)}
+      onPointerMove={(e) => {
+        if (drag.current.kind === "dragging" && drag.current.pointerId === e.pointerId) moveTo(e);
+      }}
+      onPointerUp={() => (drag.current = { kind: "idle" })}
+      onPointerCancel={() => (drag.current = { kind: "idle" })}
     >
       {cards.map((card) => {
         const r = toMap(card);

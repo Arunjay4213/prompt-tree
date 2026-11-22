@@ -24,23 +24,34 @@ export function newId(): string {
 
 const TITLE_MAX = 60;
 
+// A title of at most TITLE_MAX characters: a longer text is cut at the last space before the limit
+// and ends in "...". Only a text without any space there is cut inside a word.
+function cutTitle(text: string): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  if (line.length <= TITLE_MAX) return line;
+  const room = line.slice(0, TITLE_MAX - 3);
+  const space = room.lastIndexOf(" ");
+  return `${(space > 0 ? room.slice(0, space) : room).trimEnd()}...`;
+}
+
+// The title cut from a prompt: its first line that is not a quote (the user's own words after a
+// quoted selection), or else the quoted text without quote marks, list marks or other markdown.
 function titleFromPrompt(prompt: string): string {
-  const line = prompt.replace(/\s+/g, " ").trim();
-  return line.length > TITLE_MAX ? line.slice(0, TITLE_MAX - 3).trimEnd() + "..." : line;
+  const own = prompt.split("\n").find((line) => line.trim() !== "" && !/^\s*>/.test(line));
+  if (own !== undefined) return cutTitle(plainPreview(own) || own);
+  return cutTitle(plainPreview(prompt.replace(/^\s*>\s?/gm, "")));
 }
 
 // The model's reply to a title request, cut down to a title: its first non-empty line without a
-// "Title:" label, markdown marks, surrounding quotes or trailing punctuation, at most 60 characters.
+// "Title:" label, markdown marks, surrounding quotes or trailing punctuation, cut like any title.
 // "" when nothing usable is left.
 export function titleFromModel(reply: string): string {
   const line = reply.split("\n").find((l) => l.trim() !== "") ?? "";
-  return plainPreview(line)
+  const cleaned = plainPreview(line)
     .replace(/^\s*title\s*:\s*/i, "")
     .replace(/^[\s"'`“”‘’«»]+/, "")
-    .replace(/[\s"'`“”‘’«».,;:!?…]+$/, "")
-    .replace(/\s+/g, " ")
-    .slice(0, TITLE_MAX)
-    .trimEnd();
+    .replace(/[\s"'`“”‘’«».,;:!?…]+$/, "");
+  return cutTitle(cleaned);
 }
 
 export function threadTitle(thread: Thread): string {
@@ -220,20 +231,28 @@ export function branchOffWithPrompt(
   return { conv: { ...conv, threads: [...conv.threads, branch] }, threadId: branch.id, turnId: turn.id };
 }
 
-// A rename by the user. Renaming the root thread renames the conversation too.
-// Both titles then count as typed by the user and are never replaced automatically.
-export function renameThread(conv: Conversation, threadId: string, title: string): Conversation {
-  const thread = findThread(conv, threadId);
-  if (!thread) return conv;
-  const next = replaceThread(conv, { ...thread, title, titleSource: "user" });
-  if (thread.parent !== null || title.trim() === "") return next;
-  return { ...next, title: title.trim(), titleSource: "user" };
+// The conversation's title and its root thread's title are one title: these set both, with one source.
+function setRootTitle(conv: Conversation, title: string, titleSource: TitleSource): Conversation {
+  const root = rootThread(conv);
+  if (conv.title === title && conv.titleSource === titleSource && root.title === title && root.titleSource === titleSource) return conv;
+  return { ...replaceThread(conv, { ...root, title, titleSource }), title, titleSource };
 }
 
-// A rename by the user. An empty title keeps the old one.
+// A rename by the user: the title then counts as typed by the user and is never replaced
+// automatically. Renaming the root thread renames the conversation too. An empty title changes nothing.
+export function renameThread(conv: Conversation, threadId: string, title: string): Conversation {
+  const thread = findThread(conv, threadId);
+  const trimmed = title.trim();
+  if (!thread || trimmed === "") return conv;
+  if (thread.parent === null) return setRootTitle(conv, trimmed, "user");
+  if (thread.title === trimmed && thread.titleSource === "user") return conv;
+  return replaceThread(conv, { ...thread, title: trimmed, titleSource: "user" });
+}
+
+// A rename by the user (the top bar). It renames the root thread too. An empty title changes nothing.
 export function renameConversation(conv: Conversation, title: string): Conversation {
   const trimmed = title.trim();
-  return trimmed === "" || trimmed === conv.title ? conv : { ...conv, title: trimmed, titleSource: "user" };
+  return trimmed === "" ? conv : setRootTitle(conv, trimmed, "user");
 }
 
 // ---------- model titles ----------
@@ -248,28 +267,29 @@ export function threadToTitle(conv: Conversation, turnId: string): { thread: Thr
 
 // prompt -> model. Applied only while the thread exists and its title is still the prompt title:
 // the user may have renamed it, or it may have been merged or deleted, while the title was written.
-// For the root thread, the conversation takes the title too while its own title is still the prompt title.
+// For the root thread, the conversation takes the same title.
 // An empty title changes nothing.
 export function applyModelTitle(conv: Conversation, threadId: string, title: string): Conversation {
   const thread = findThread(conv, threadId);
   if (!thread || thread.titleSource !== "prompt" || title === "") return conv;
-  const next = replaceThread(conv, { ...thread, title, titleSource: "model" });
-  if (thread.parent !== null || conv.titleSource !== "prompt") return next;
-  return { ...next, title, titleSource: "model" };
+  if (thread.parent === null) return setRootTitle(conv, title, "model");
+  return replaceThread(conv, { ...thread, title, titleSource: "model" });
 }
 
+// The setters return the same conversation when nothing changes, so no save is made for it.
 export function setCardView(conv: Conversation, threadId: string, cardView: Thread["cardView"]): Conversation {
   const thread = findThread(conv, threadId);
-  return thread ? replaceThread(conv, { ...thread, cardView }) : conv;
+  return thread && thread.cardView !== cardView ? replaceThread(conv, { ...thread, cardView }) : conv;
 }
 
 export function setAllCardViews(conv: Conversation, cardView: Thread["cardView"]): Conversation {
+  if (conv.threads.every((t) => t.cardView === cardView)) return conv;
   return { ...conv, threads: conv.threads.map((t) => (t.cardView === cardView ? t : { ...t, cardView })) };
 }
 
 export function setBranchesView(conv: Conversation, threadId: string, branchesView: Thread["branchesView"]): Conversation {
   const thread = findThread(conv, threadId);
-  return thread ? replaceThread(conv, { ...thread, branchesView }) : conv;
+  return thread && thread.branchesView !== branchesView ? replaceThread(conv, { ...thread, branchesView }) : conv;
 }
 
 // Makes a thread's card visible: every ancestor that hides its branches shows them again.
@@ -298,6 +318,11 @@ export function inheritedTurns(conv: Conversation, threadId: string): { thread: 
   return result;
 }
 
+// The inherited turns that are really sent as context (the rest have no answer to send).
+export function inheritedContext(conv: Conversation, threadId: string): { thread: Thread; turn: Turn }[] {
+  return inheritedTurns(conv, threadId).filter((x) => canBranchFrom(x.turn));
+}
+
 // The messages sent to the model for the given turn: its full context, then its own prompt.
 export function buildMessages(conv: Conversation, turnId: string): ChatMessage[] {
   const found = findTurn(conv, turnId);
@@ -317,10 +342,13 @@ export function buildMessages(conv: Conversation, turnId: string): ChatMessage[]
 
 // ---------- turn status transitions ----------
 
+// Returns the same conversation when `change` returns the same turn.
 function updateTurn(conv: Conversation, turnId: string, change: (turn: Turn) => Turn): Conversation {
   const found = findTurn(conv, turnId);
   if (!found) return conv;
-  const turns = found.thread.turns.map((t) => (t.id === turnId ? change(t) : t));
+  const changed = change(found.turn);
+  if (changed === found.turn) return conv;
+  const turns = found.thread.turns.map((t) => (t.id === turnId ? changed : t));
   return replaceThread(conv, { ...found.thread, turns });
 }
 
@@ -398,7 +426,7 @@ export function removeTurn(conv: Conversation, turnId: string): Conversation {
 
 // ---------- output status transitions ----------
 
-function outputInFlight(output: FinalOutput): boolean {
+export function outputInFlight(output: FinalOutput): boolean {
   return output.status === "waiting" || output.status === "streaming";
 }
 
@@ -444,7 +472,7 @@ export function interruptOutput(conv: Conversation): Conversation {
 }
 
 export function setOutputInstruction(conv: Conversation, instruction: string): Conversation {
-  return { ...conv, output: { ...conv.output, instruction } };
+  return conv.output.instruction === instruction ? conv : { ...conv, output: { ...conv.output, instruction } };
 }
 
 // ---------- recovery on load ----------
@@ -576,20 +604,10 @@ export function addExcerptClip(conv: Conversation, threadId: string, turnId: str
 }
 
 export function removeClip(conv: Conversation, clipId: string): Conversation {
-  return { ...conv, clips: conv.clips.filter((c) => c.id !== clipId) };
+  return conv.clips.some((c) => c.id === clipId) ? { ...conv, clips: conv.clips.filter((c) => c.id !== clipId) } : conv;
 }
 
-export function moveClip(conv: Conversation, clipId: string, delta: -1 | 1): Conversation {
-  const from = conv.clips.findIndex((c) => c.id === clipId);
-  const to = from + delta;
-  if (from < 0 || to < 0 || to >= conv.clips.length) return conv;
-  const clips = [...conv.clips];
-  const [clip] = clips.splice(from, 1);
-  clips.splice(to, 0, clip!);
-  return { ...conv, clips };
-}
-
-// Moves a clip to a new position in the list (drag to reorder).
+// Moves a clip to a new position in the list (drag to reorder, or Move up and down by one).
 export function moveClipTo(conv: Conversation, clipId: string, toIndex: number): Conversation {
   const from = conv.clips.findIndex((c) => c.id === clipId);
   if (from < 0 || toIndex < 0 || toIndex >= conv.clips.length || toIndex === from) return conv;

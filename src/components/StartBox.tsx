@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { sendFirstPrompt, useStore } from "../store";
+import { useEffect, useRef } from "react";
+import { selectOpenConversation, sendFirstPrompt, setDraft, useStore } from "../store";
 import { Button, Label, LabelSm } from "./ui";
 
 const STEPS = [
@@ -9,8 +9,11 @@ const STEPS = [
 ];
 
 // The start screen of a blank conversation: one question starts the tree.
+// Its text is the root thread's draft, so it survives switching away and back (and a reload).
 export function StartBox() {
-  const [text, setText] = useState("");
+  const rootId = useStore((s) => selectOpenConversation(s)?.threads[0]?.id ?? "");
+  const text = useStore((s) => s.drafts[rootId] ?? "");
+  const setText = (value: string) => setDraft(rootId, value);
   const focusTick = useStore((s) => s.composerFocusTick);
   const ref = useRef<HTMLTextAreaElement>(null);
   const empty = text.trim() === "";

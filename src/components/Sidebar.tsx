@@ -8,13 +8,14 @@ import {
   selectIsLive,
   selectOpenConversation,
   useStore,
-  type HealthState,
 } from "../store";
 import { relativeTime } from "../text";
 import * as tree from "../tree";
+import { serverMode } from "./serverMode";
 import { Button, ConfirmDialog, IconButton, Label, LabelSm, LiveDot, Skeleton, Tip } from "./ui";
 
-type DeleteAsk = { kind: "closed" } | { kind: "asking"; id: string; title: string };
+// closed keeps the last title, so the dialog can fade out with its text still in it.
+type DeleteAsk = { kind: "closed"; title: string } | { kind: "asking"; id: string; title: string };
 
 const SIDEBAR_WIDTH = 248;
 // The canvas column never gets narrower than this because of the sidebar.
@@ -49,8 +50,7 @@ export function useSidebarDisplay(): SidebarDisplay {
 
 export function Sidebar() {
   const view = useSidebarDisplay();
-  const [ask, setAsk] = useState<DeleteAsk>({ kind: "closed" });
-  const [lastAskTitle, setLastAskTitle] = useState("");
+  const [ask, setAsk] = useState<DeleteAsk>({ kind: "closed", title: "" });
 
   return (
     <aside
@@ -72,22 +72,19 @@ export function Sidebar() {
           <Label>Conversations</Label>
         </div>
         <ConversationList
-          onAskDelete={(id, title) => {
-            setLastAskTitle(title);
-            setAsk({ kind: "asking", id, title });
-          }}
+          onAskDelete={(id, title) => setAsk({ kind: "asking", id, title })}
         />
         <ModelTag />
       </div>
       <ConfirmDialog
         open={ask.kind === "asking"}
         onOpenChange={(open) => {
-          if (!open) setAsk({ kind: "closed" });
+          if (!open) setAsk((a) => ({ kind: "closed", title: a.title }));
         }}
         title="Delete this conversation?"
         body={
           <>
-            <span className="text-fg">{ask.kind === "asking" ? ask.title : lastAskTitle}</span> and every branch and clip in it
+            <span className="text-fg">{ask.title}</span> and every branch and clip in it
             will be deleted. This cannot be undone.
           </>
         }
@@ -177,11 +174,15 @@ const ListedRow = memo(function ListedRow({
   // A loaded conversation shows its current title, so a rename shows here at once.
   const title = useStore((s) => tree.conversationTitle(s.conversations[summary.id] ?? summary));
   const live = useStore(selectIsLive(summary.id));
+  // A plain string, so the row does not redraw while text streams.
+  const saveKind = useStore((s) => s.saveStates[summary.id]?.kind ?? "saved");
+  const alert: RowAlert = saveKind === "conflict" ? "conflict" : saveKind === "failed" ? "not-saved" : "none";
   return (
     <Row
       id={summary.id}
       title={title}
       meta={relativeTime(summary.updatedAt, now)}
+      alert={alert}
       live={live}
       active={active}
       onOpen={() => void openConversation(summary.id)}
@@ -190,10 +191,22 @@ const ListedRow = memo(function ListedRow({
   );
 });
 
+// What a row says in place of its time when the conversation could not be saved.
+// none:      the time is shown.
+// conflict:  another tab saved a newer version (or deleted it); the user must choose.
+// not-saved: a save failed for another reason; it is retried.
+type RowAlert = "none" | "conflict" | "not-saved";
+const ALERT_LABEL: Record<Exclude<RowAlert, "none">, string> = { conflict: "Conflict", "not-saved": "Not saved" };
+const ALERT_TIP: Record<Exclude<RowAlert, "none">, string> = {
+  conflict: "Changed in another tab. Open it to choose a version.",
+  "not-saved": "The last save failed. It is tried again every 5 seconds.",
+};
+
 const Row = memo(function Row({
   id,
   title,
   meta,
+  alert = "none",
   live = false,
   active,
   onOpen,
@@ -202,6 +215,7 @@ const Row = memo(function Row({
   id: string;
   title: string;
   meta: string;
+  alert?: RowAlert;
   live?: boolean;
   active: boolean;
   onOpen: () => void;
@@ -213,18 +227,27 @@ const Row = memo(function Row({
       className={`group relative flex items-center border-b border-line-soft transition-colors ${active ? "bg-surface" : "hover:bg-surface"}`}
     >
       {active && <span className="absolute inset-y-0 left-0 w-[2px] bg-fg" aria-hidden />}
-      <button
-        type="button"
-        aria-current={active ? "page" : undefined}
-        className="min-w-0 flex-1 py-2.5 pr-2 pl-4 text-left outline-offset-[-2px]"
-        onClick={onOpen}
-      >
-        <span className="block truncate text-[13.5px] leading-[1.3] font-medium tracking-[-0.005em]">{title}</span>
-        <span className="label-sm mt-1 flex items-center gap-2">
-          {live && <LiveDot />}
-          {meta}
-        </span>
-      </button>
+      <Tip content={alert === "none" ? null : ALERT_TIP[alert]}>
+        <button
+          type="button"
+          aria-current={active ? "page" : undefined}
+          className="min-w-0 flex-1 py-2.5 pr-2 pl-4 text-left outline-offset-[-2px]"
+          onClick={onOpen}
+        >
+          <span className="block truncate text-[13.5px] leading-[1.3] font-medium tracking-[-0.005em]">{title}</span>
+          {alert === "none" ? (
+            <span className="label-sm mt-1 flex items-center gap-2">
+              {live && <LiveDot />}
+              {meta}
+            </span>
+          ) : (
+            <span className="label-sm mt-1 flex items-center gap-2 text-fail" data-testid="row-alert">
+              <span className="dot bg-fail" aria-hidden />
+              {ALERT_LABEL[alert]}
+            </span>
+          )}
+        </button>
+      </Tip>
       {onDelete && (
         <IconButton
           icon={Trash2}
@@ -238,32 +261,15 @@ const Row = memo(function Row({
   );
 });
 
-const MODE_TAG: Record<
-  "loading" | "live" | "demo" | "no_key" | "unreachable",
-  { dot: string; text: (model: string) => string; tip: string }
-> = {
-  loading: { dot: "bg-line", text: () => "Connecting", tip: "Asking the server which mode it runs in" },
-  live: { dot: "bg-pass", text: (model) => model, tip: "Live: answers come from the model and cost money" },
-  demo: { dot: "bg-accent", text: () => "Demo mode", tip: "Demo mode: placeholder answers, no key needed, nothing is spent" },
-  no_key: { dot: "bg-fail", text: () => "No API key", tip: "Put OPENAI_API_KEY in the .env file and restart the server" },
-  unreachable: { dot: "bg-fail", text: () => "Server offline", tip: "The server is not reachable. Start it with pnpm dev" },
-};
-
-function modeOf(health: HealthState): keyof typeof MODE_TAG {
-  if (health.kind === "ready") return health.health.mode;
-  return health.kind;
-}
-
 function ModelTag() {
   const health = useStore((s) => s.health);
-  const mode = MODE_TAG[modeOf(health)];
-  const model = health.kind === "ready" ? health.health.model : "";
+  const mode = serverMode(health);
   return (
     <div className="flex h-10 shrink-0 items-center border-t border-line px-4">
-      <Tip content={mode.tip} side="top">
+      <Tip content={mode.tip}>
         <span tabIndex={0} className="label-sm flex items-center gap-2 rounded-cell">
           <span className={`dot ${mode.dot}`} aria-hidden />
-          {mode.text(model)}
+          {mode.label}
         </span>
       </Tip>
     </div>

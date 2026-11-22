@@ -4,17 +4,17 @@ import { useShallow } from "zustand/react/shallow";
 import type { Turn } from "../../../shared/api";
 import {
   branchFromTurn,
+  copyWithToast,
   goToThread,
   removeTurn,
   retryTurn,
   selectOpenConversation,
-  showToast,
   splitOff,
   stopTurn,
   toggleAnswerClip,
   useStore,
 } from "../../store";
-import { copyText, plural } from "../../text";
+import { plural } from "../../text";
 import * as tree from "../../tree";
 import { Markdown, useStreamText } from "../Markdown";
 import { Button, ICON, LabelSm, LiveDot, Skeleton, Tag, Tip } from "../ui";
@@ -69,7 +69,7 @@ export const TurnView = memo(function TurnView({ threadId, turn, index, isLast }
   const inFlight = tree.isInFlight(turn);
   const answer = useStreamText(turn.answer, inFlight);
   const hasAnswer = turn.answer.trim() !== "";
-  const copy = () => void copyText(turn.answer).then((ok) => showToast(ok ? "Copied" : "Copy failed"));
+  const copy = () => copyWithToast(turn.answer);
 
   return (
     <section data-testid={`turn-panel-${turn.id}`} data-last={isLast} className="turn border-b border-line-soft py-7 last:border-b-0">

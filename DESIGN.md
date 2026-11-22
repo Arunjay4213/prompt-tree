@@ -71,7 +71,7 @@ Use `text-wrap: balance` on headings and `text-wrap: pretty` on reading text.
 
 ### Icons
 
-Fold = `ChevronsDownUp`, open = `ChevronsUpDown`, fit view = `Maximize`, branch = `GitBranch`, clip = `Paperclip`, delete = `Trash2`, copy = `Copy`. The same action uses the same icon everywhere (top bar, card header, thread header).
+Fold = `ChevronsDownUp`, open = `ChevronsUpDown`, fit view = `Maximize`, branch = `GitBranch`, clip = `Paperclip`, delete = `Trash2`, copy = `Copy`. The same action uses the same icon everywhere (top bar, thread header). The one exception is the card header on the canvas, whose fold control is a single chevron that rotates.
 
 ### Buttons
 
@@ -93,6 +93,7 @@ Use Radix primitives (`@radix-ui/react-tooltip`, `@radix-ui/react-dialog`, `@rad
 
 - Tooltip: background fg, text bg, mono 10.5px uppercase tracking 0.08em, padding 5px 8px, radius 6, 400ms open delay, 6px offset.
 - Dialog (confirm delete): centered box, background bg, 1px fg border, radius 10, corner ticks, overlay `rgba(9,9,11,0.25)`. Title 18px weight 500, body 14px muted, buttons right-aligned: secondary Cancel, destructive confirm.
+- Conflict bar layout: when the canvas column is wide, the message is on the left and the two buttons on the right; when it is narrow, the message takes the full width and the buttons sit on a row below it. Nothing overlaps at any width from 320px.
 - Conflict bar (a save was refused because the conversation changed elsewhere): a full-width strip at the top of the canvas column, under the top bar, background `bg`, bottom hairline in the fail color, a 6px fail dot, the message in UI text, and two small buttons on the right (secondary and ghost). The top bar save label reads `CONFLICT` in the fail color.
 - Toast ("Copied", "Not saved"): bottom center of the canvas, background fg, text bg, mono label style, radius 6, slides up 8px and fades, leaves after 1.8s.
 
@@ -140,6 +141,7 @@ Full window, no page scroll. Three columns separated by 1px `line` hairlines. Al
 - List rows, 1px `line-soft` divider between rows: title (UI text, one line, ellipsis), below it a mono small label `6 THREADS · 2H AGO`.
   Active row: a 2px fg bar on the left edge and background surface. Hover: background surface.
   On hover a ghost trash button appears at the right; it opens the confirm dialog.
+  A row whose conversation is in conflict shows a 6px fail dot and `CONFLICT` in the fail color in place of the time; a failed save shows `NOT SAVED` the same way.
 - Bottom (top hairline, 40px): the model tag, mono small label: a 6px dot (pass color for live, accent for demo, fail for no key) and `GPT-6-LUNA`, or `DEMO MODE`, or `NO API KEY`. A tooltip explains the mode.
 
 ### Top bar
@@ -186,6 +188,7 @@ Width 380. Background `bg`. Border 1px `line`. Radius 6. No shadow.
 - **Port**: where a branch leaves a turn, a 7px filled circle sits centered on the card's right border at that row (fg when on the selected path, `faint` otherwise).
 - **Folded card**: header only (40px). If it contains clips, a small accent square and the clip count appear before the turn count. If it has a live turn, the accent pulse dot appears there too.
 - **Empty new branch**: dashed 1px `line` border, header shows the path number and `NEW BRANCH`, body is one line of muted text: "Write the first prompt in the panel."
+- Card borders stay at least one screen pixel wide at every zoom level.
 - **Selected card**: border 1.5px fg and corner ticks. Do not change the card's size when selected (compensate the border so nothing shifts).
 - **Cards on the path to the root** (ancestors of the selected card): border 1px fg.
 - **Hover on a card that is not selected**: border `faint`.
@@ -216,7 +219,7 @@ Switching between the two looks is a 150ms cross-fade, and it never changes the 
 
 - Card position changes: 350ms expo on the transform.
 - Card height changes while streaming are immediate (text grows naturally), and the cards below follow with the position animation.
-- A new or newly selected card that is outside the view is brought into view by a smooth pan (400ms), without changing the zoom. Never refit the whole tree unless the user presses Fit view or opens a conversation.
+- A new or newly selected card that is outside the view is brought into view by a smooth pan (400ms), without changing the zoom. Never refit the whole tree unless the user presses Fit view.
 - With `prefers-reduced-motion: reduce`, all of this is instant.
 
 ### Keyboard on the canvas
