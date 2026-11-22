@@ -7,12 +7,10 @@ import {
   reloadList,
   selectIsLive,
   selectOpenConversation,
-  selectModels,
   useStore,
 } from "../store";
 import { relativeTime } from "../text";
 import * as tree from "../tree";
-import { serverMode } from "./serverMode";
 import { Button, ConfirmDialog, IconButton, Label, LabelSm, LiveDot, Skeleton, Tip } from "./ui";
 
 // closed keeps the last title, so the dialog can fade out with its text still in it.
@@ -75,7 +73,6 @@ export function Sidebar() {
         <ConversationList
           onAskDelete={(id, title) => setAsk({ kind: "asking", id, title })}
         />
-        <ModelTag />
       </div>
       <ConfirmDialog
         open={ask.kind === "asking"}
@@ -261,22 +258,6 @@ const Row = memo(function Row({
     </div>
   );
 });
-
-function ModelTag() {
-  const health = useStore((s) => s.health);
-  const models = useStore(selectModels);
-  const mode = serverMode(health, models);
-  return (
-    <div className="flex h-10 shrink-0 items-center border-t border-line px-4">
-      <Tip content={mode.tip}>
-        <span tabIndex={0} className="label-sm flex items-center gap-2 rounded-cell">
-          <span className={`dot ${mode.dot}`} aria-hidden />
-          {mode.label}
-        </span>
-      </Tip>
-    </div>
-  );
-}
 
 // Re-render once a minute so relative times stay fresh.
 function useNow(): number {

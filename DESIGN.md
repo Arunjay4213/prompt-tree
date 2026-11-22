@@ -143,7 +143,6 @@ Full window, no page scroll. Three columns separated by 1px `line` hairlines. Al
   Active row: a 2px fg bar on the left edge and background surface. Hover: background surface.
   On hover a ghost trash button appears at the right; it opens the confirm dialog.
   A row whose conversation is in conflict shows a 6px fail dot and `CONFLICT` in the fail color in place of the time; a failed save shows `NOT SAVED` the same way.
-- Bottom (top hairline, 40px): the model tag, mono small label: a 6px dot (pass color for live, accent for demo, fail for no key) and `GPT-6-LUNA`, or `DEMO MODE`, or `NO API KEY`. A tooltip explains the mode.
 
 ### Top bar
 
@@ -275,7 +274,6 @@ Selecting a thread shows its latest turn: if that turn fits in the body, the bod
 - The row must never wrap at any panel width from 380 to 720: a long model name truncates with an ellipsis inside the button (max width about 40% of the row).
 - On a turn, the answer's label row shows the model name where it used to say `LUNA` (mono small label, uppercase). Turns saved before models were recorded show `ASSISTANT`.
 - The Output tab's Combine section shows the same picker next to the Combine button.
-- The sidebar's bottom tag shows the model name when one model is available, or the count (`3 MODELS`) with the list in its tooltip.
 
 ### Output tab
 
