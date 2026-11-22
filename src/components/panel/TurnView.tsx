@@ -1,4 +1,4 @@
-import { Check, Copy, CornerDownRight, GitBranch, Paperclip, RotateCcw, Square, X, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, CornerDownRight, GitBranch, Paperclip, RotateCcw, Square, X, type LucideIcon } from "lucide-react";
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { Turn } from "../../../shared/api";
@@ -17,7 +17,7 @@ import {
   toggleAnswerClip,
   useStore,
 } from "../../store";
-import { answerOptions, modelName, plural, splitQuote } from "../../text";
+import { answerOptions, askedForAlternatives, modelName, plural, splitQuote } from "../../text";
 import * as tree from "../../tree";
 import { Markdown, useStreamText } from "../Markdown";
 import { MenuItem, MoreMenu } from "../Menu";
@@ -131,7 +131,14 @@ export const TurnView = memo(function TurnView({ threadId, turn, index, isLast }
       </div>
 
       {options.length >= 2 && (
-        <OptionBlock threadId={threadId} turnId={turn.id} options={options} branches={branches} branchNumbers={branchNumbers} />
+        <OptionBlock
+          threadId={threadId}
+          turnId={turn.id}
+          options={options}
+          branches={branches}
+          branchNumbers={branchNumbers}
+          initial={askedForAlternatives(turn.prompt) ? "expanded" : "collapsed"}
+        />
       )}
 
       {!inFlight && turn.status !== "failed" && (
@@ -293,28 +300,68 @@ function AnswerLabelRow({ children }: { children: ReactNode }) {
 
 // "Branch per option": the options of the answer, each a row that creates its branch (or links to
 // the branch it already has), and "Branch all".
+// collapsed: one quiet row with the count. expanded: the option rows and "Branch all".
+type OptionLook = "collapsed" | "expanded";
+// A look the person chose, per turn, kept while the page is open (not saved).
+const chosenLooks = new Map<string, OptionLook>();
+
 function OptionBlock({
   threadId,
   turnId,
   options,
   branches,
   branchNumbers,
+  initial,
 }: {
   threadId: string;
   turnId: string;
   options: string[];
   branches: { id: string; title: string }[];
   branchNumbers: string[];
+  initial: OptionLook;
 }) {
+  const [look, setLookState] = useState<OptionLook>(() => chosenLooks.get(turnId) ?? initial);
+  const setLook = (next: OptionLook) => {
+    chosenLooks.set(turnId, next);
+    setLookState(next);
+  };
+  if (look === "collapsed") {
+    return (
+      <div data-testid="option-block" data-look="collapsed" className="mt-5 border-y border-line-soft py-1">
+        <button
+          type="button"
+          data-testid="options-toggle"
+          aria-expanded={false}
+          onClick={() => setLook("expanded")}
+          className="-mx-2 flex h-[30px] w-[calc(100%+16px)] items-center gap-2 rounded-cell px-2 text-left text-[13px] font-medium text-muted transition-colors hover:bg-surface hover:text-fg"
+        >
+          <ChevronRight {...ICON} className="shrink-0" />
+          Branch per option
+          <span className="num text-[12px]">{options.length}</span>
+        </button>
+      </div>
+    );
+  }
   const existing = options.map((title) => {
     const i = branches.findIndex((b) => b.title.trim() === title.trim());
     return i >= 0 ? { id: branches[i]!.id, number: branchNumbers[i] ?? "" } : null;
   });
   const missing = existing.filter((e) => e === null).length;
   return (
-    <div data-testid="option-block" className="mt-5 border-y border-line-soft py-2">
+    <div data-testid="option-block" data-look="expanded" className="mt-5 border-y border-line-soft py-2">
       <div className="flex h-[34px] items-center gap-3">
-        <LabelSm className="text-muted">Branch per option</LabelSm>
+        <Tip content="Hide the options">
+          <button
+            type="button"
+            data-testid="options-toggle"
+            aria-expanded={true}
+            onClick={() => setLook("collapsed")}
+            className="-ml-2 flex h-[30px] items-center gap-2 rounded-cell px-2 text-muted transition-colors hover:bg-surface hover:text-fg"
+          >
+            <ChevronDown {...ICON} className="shrink-0" />
+            <LabelSm className="text-muted">Branch per option</LabelSm>
+          </button>
+        </Tip>
         <span className="flex-1" />
         <Button
           size="sm"

@@ -51,10 +51,11 @@ You can set several at once and pick the model per message.
   For Ollama on the same machine, use `COMPATIBLE_BASE_URL=http://localhost:11434/v1` and no key.
 - **opencode**: run `opencode serve`, then set `OPENCODE_URL` to the address it prints and `OPENCODE_PASSWORD` to its password, and optionally `OPENCODE_MODELS` (names in `provider/model` form).
   opencode then supplies whatever access it holds, such as a ChatGPT plan, GitHub Copilot, API keys or local models, and prompt-tree never sees those logins.
-  Each answer runs in a fresh opencode session with every tool denied, and the session is deleted afterwards.
+  Each answer runs in a fresh opencode session with every tool denied, and the session is deleted afterwards; sessions left behind when opencode stops mid-answer are deleted the next time prompt-tree starts.
+  The sessions use prompt-tree's own agent, a plain chat assistant that prompt-tree writes as an agent file into the folder its sessions run in, so opencode's coding-agent persona does not apply.
 
 The opencode path has two limits.
-The earlier messages of a branch are sent as one transcript inside a single prompt, and opencode's own base instructions still apply, so answers can read a little differently from the same model called directly.
+The earlier messages of a branch are sent as one transcript inside a single prompt, and opencode still adds its date and environment context and your global AGENTS.md if you have one, so answers can read a little differently from the same model called directly.
 
 `DEFAULT_MODEL` (as `<provider>:<model name>`, for example `openai:gpt-6-luna`) picks the default model, and `PORT` changes the server port (default 8787).
 

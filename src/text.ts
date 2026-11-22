@@ -223,3 +223,9 @@ export function promptPreview(prompt: string): string {
   const { quote, own } = splitQuote(prompt);
   return own || quote;
 }
+
+// Whether a prompt asked for alternatives (then the options of its answer are shown open).
+// Whole words, any case, from a fixed list.
+export function askedForAlternatives(prompt: string): boolean {
+  return /\b(options?|versions?|alternatives?|choices?|ideas?|approach(es)?|ways?|variants?|plans?|possibilities|candidates)\b/i.test(prompt);
+}
