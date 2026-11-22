@@ -20,6 +20,7 @@ export type Turn = {
   status: TurnStatus;
   error: string | null;
   createdAt: number;
+  model: string | null; // id of the model that answered (ModelInfo.id); null for turns saved before this existed
 };
 
 // How a thread's card is drawn on the canvas.
@@ -69,6 +70,7 @@ export type FinalOutput = {
   text: string;
   instruction: string; // the user's optional note on how to combine the clips
   error: string | null;
+  model: string | null; // id of the model that wrote the document (ModelInfo.id); null when saved before this existed
 };
 
 export type Conversation = {
@@ -88,7 +90,7 @@ export const CONVERSATION_ID_PATTERN = /^[a-z0-9-]{8,64}$/;
 
 // ---------- HTTP API (all under /api) ----------
 //
-// GET    /api/health                 -> Health
+// GET    /api/health                 -> Health (mode, available models, default model)
 // GET    /api/conversations          -> ConversationSummary[]   (newest first)
 // GET    /api/conversations/:id      -> Conversation            (404 if missing)
 // PUT    /api/conversations/:id      body: Conversation, header X-Base-Version -> 204  (create or replace)
@@ -96,6 +98,9 @@ export const CONVERSATION_ID_PATTERN = /^[a-z0-9-]{8,64}$/;
 // POST   /api/complete               body: CompleteRequest -> text/event-stream of StreamEvent
 //
 // Errors on the JSON routes: non-2xx status with body { error: string }.
+//
+// Models: the server lists the models it can use in Health.models. Every CompleteRequest names
+// one of them by id. A missing model, or an id that is not in the list, is a 400 before any stream starts.
 //
 // Save conflicts (two tabs or windows saving the same conversation):
 // PUT requires the header X-Base-Version. Its value is the decimal `updatedAt` of the stored
@@ -106,18 +111,29 @@ export const CONVERSATION_ID_PATTERN = /^[a-z0-9-]{8,64}$/;
 // Anything else is a 409 with body SaveConflict. `currentUpdatedAt` is the stored `updatedAt`,
 // or null when no file exists (the conversation was deleted elsewhere).
 
-// live:   a real key is configured, answers come from the model
-// demo:   DEMO_MODE=1, answers are placeholder text, no key needed, no money spent
-// no_key: no key is configured and demo mode is off; /api/complete will answer with an error event
+// live:   at least one model provider is configured, answers come from real models
+// demo:   DEMO_MODE=1, only the demo models, answers are placeholder text, no key needed, no money spent
+// no_key: no provider is configured and demo mode is off; `models` is empty and
+//         /api/complete answers with an error event
 export type ServerMode = "live" | "demo" | "no_key";
 
-export type Health = { mode: ServerMode; model: string };
+// One model the server can use.
+// id:           `<provider>:<model name>`, for example `openai:gpt-6-luna`; this is what requests name
+// name:         the model name alone, for example `gpt-6-luna`
+// provider:     one of `openai`, `anthropic`, `compatible`, `demo`
+// providerName: the label to show: `OpenAI`, `Anthropic`, the configured name of the compatible
+//               endpoint, or `Demo`
+export type ModelInfo = { id: string; name: string; provider: string; providerName: string };
+
+// defaultModel is an id from `models`, or null when `models` is empty.
+export type Health = { mode: ServerMode; models: ModelInfo[]; defaultModel: string | null };
 
 export type SaveConflict = { error: string; currentUpdatedAt: number | null };
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 export type CompleteRequest = {
+  model: string; // a ModelInfo.id from Health.models
   system?: string;
   messages: ChatMessage[]; // must be non-empty and end with a user message
 };

@@ -9,7 +9,7 @@ import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import type { Clip, Thread, Turn } from "../../shared/api";
 import { branchFromTurn, goToThread, selectOpenConversation, toggleAnswerClip, toggleBranchesView, toggleCardView, useStore } from "../store";
-import { plainPreview, plural } from "../text";
+import { plainPreview, plural, promptPreview } from "../text";
 import * as tree from "../tree";
 import { zoomBucket } from "./canvas/geometry";
 import { IconButton, LabelSm, LiveDot } from "./ui";
@@ -79,7 +79,9 @@ export const ThreadCard = memo(function ThreadCard({ threadId, pathState, pathNu
   if (!thread) return null;
   const kind: CardKind = thread.turns.length === 0 ? "empty" : "turns";
   const folded = thread.cardView === "folded";
-  const title = kind === "empty" ? "New branch" : tree.threadTitle(thread);
+  // An empty branch shows its title when it has one (an option's); only an untitled one says "New branch".
+  const untitledEmpty = kind === "empty" && thread.title.trim() === "";
+  const title = untitledEmpty ? "New branch" : tree.threadTitle(thread);
 
   return (
     <article
@@ -141,7 +143,7 @@ function CardHeader({
   return (
     <header className={`flex items-center gap-2 pr-1.5 pl-3 ${folded ? "h-[38px]" : "h-[39px] border-b border-line-soft"}`}>
       <LabelSm className="num shrink-0">{pathNumber}</LabelSm>
-      {kind === "empty" ? (
+      {kind === "empty" && thread.title.trim() === "" ? (
         <LabelSm className="min-w-0 flex-1 truncate text-muted">New branch</LabelSm>
       ) : (
         <span className="min-w-0 flex-1 truncate text-[13.5px] leading-[18px] font-medium tracking-[-0.005em] text-fg" data-card-title>
@@ -210,7 +212,7 @@ const TurnRow = memo(function TurnRow({
       <LabelSm className={`num w-6 shrink-0 leading-[18px] ${clipped ? "text-accent" : ""}`}>{String(index + 1).padStart(2, "0")}</LabelSm>
       <div className="min-w-0 flex-1">
         {/* pr-14 keeps the two row buttons' place free on the prompt's lines, so no text is ever under them. */}
-        <p className="line-clamp-2 pr-14 text-[13px] leading-[18px] font-medium text-fg [overflow-wrap:anywhere]">{turn.prompt}</p>
+        <p className="line-clamp-2 pr-14 text-[13px] leading-[18px] font-medium text-fg [overflow-wrap:anywhere]">{promptPreview(turn.prompt)}</p>
         <TurnAnswer turn={turn} excerpts={excerpts} />
       </div>
       <RowActions threadId={threadId} turnId={turn.id} clipped={clipped} clipReason={clipReason} branchReason={branchReason} />

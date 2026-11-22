@@ -295,7 +295,7 @@ function Flow({ convId }: { convId: string }) {
   // the user pans or zooms, the card no longer fits, or another card is revealed.
   const follow = useRef<Follow>({ kind: "off" });
 
-  // On open, the root card is at the top left at zoom 1 (the default viewport). A remembered
+  // On open, the root card is at the top left at zoom 0.8 (the default viewport). A remembered
   // selection deeper in the tree is brought into view instead, without motion.
   const opened = useRef(false);
   const handledTick = useRef(useStore.getState().viewRequest?.tick ?? 0);
@@ -429,7 +429,7 @@ function Flow({ convId }: { convId: string }) {
       <ReactFlow
         nodes={NO_NODES}
         edges={NO_NODES}
-        defaultViewport={{ x: 48, y: 48, zoom: 1 }}
+        defaultViewport={{ x: 48, y: 48, zoom: 0.8 }}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
         panOnScroll

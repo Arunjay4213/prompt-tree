@@ -2,10 +2,11 @@ import { Copy, Download, Paperclip, Square, TextSelect } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import type { Conversation, FinalOutput } from "../../shared/api";
 import { combine, copyWithToast, selectOpenConversation, setOutputInstruction, stopCombine, useStore } from "../store";
-import { downloadText, plural } from "../text";
+import { downloadText, modelName, plural } from "../text";
 import * as tree from "../tree";
 import { Markdown, useStreamText } from "./Markdown";
 import { ClipList } from "./panel/ClipList";
+import { ModelPicker } from "./ModelPicker";
 import { Button, ICON, IconButton, Label, LabelSm, LiveDot, Skeleton } from "./ui";
 
 
@@ -17,7 +18,7 @@ export function OutputPanel() {
 
   return (
     <div className="scroll-y min-h-0 flex-1 overflow-x-hidden" data-testid="output-body">
-      <div className="px-6 pt-6 pb-12">
+      <div className="mx-auto max-w-[808px] px-6 pt-6 pb-12">
         <div className="flex h-5 items-center justify-between gap-4">
           <Label>Final output</Label>
           {clips > 0 && <LabelSm className="num">{plural(clips, "clip")}</LabelSm>}
@@ -46,7 +47,7 @@ function EmptyOutput() {
     <div className="mt-4 border-y border-line-soft py-6">
       <h2 className="text-[18px] leading-[1.3] font-medium tracking-[-0.01em]">Nothing collected yet</h2>
       <p className="mt-3 text-[13.5px] leading-[1.6] text-pretty text-muted">
-        Press <Paperclip {...ICON} className="inline-block align-[-3px] text-fg" /> on a card, or <span className="label-sm text-fg">Add to output</span> under
+        Press <Paperclip {...ICON} className="inline-block align-[-3px] text-fg" /> on a card, or <span className="font-medium text-fg">Add to output</span> under
         an answer, to collect the whole answer.
       </p>
       <p className="mt-2 text-[13.5px] leading-[1.6] text-pretty text-muted">
@@ -79,10 +80,11 @@ function Combine({ output }: { output: FinalOutput }) {
           rows={1}
           aria-label="How to combine"
           placeholder="Optional: how should these be combined?"
-          className="block min-h-[46px] w-full resize-none bg-transparent px-3 py-3 text-[15px] leading-[1.5] text-fg outline-none placeholder:text-faint"
+          className="block min-h-[46px] w-full resize-none bg-transparent px-3 py-3 text-[15px] leading-[1.5] text-fg outline-none placeholder:text-muted"
         />
       </div>
-      <div className="mt-3 flex justify-end">
+      <div className="@container mt-3 flex items-center justify-end gap-3">
+        <ModelPicker className="max-w-[min(100%,40cqw)]" />
         {running ? (
           <Button icon={Square} data-testid="combine-stop" onClick={stopCombine}>
             Stop
@@ -151,6 +153,11 @@ function CombinedDocument({ conv }: { conv: Conversation }) {
     <section className="mt-8">
       <div className="flex h-7 items-center gap-3">
         <Label className="shrink-0">Combined document</Label>
+        {output.status !== "empty" && (
+          <span className="label-sm min-w-0 truncate" data-testid="output-model">
+            {modelName(output.model)}
+          </span>
+        )}
         <OutputState output={output} />
         <span className="flex-1" />
         <span className="-mr-1.5 flex shrink-0">

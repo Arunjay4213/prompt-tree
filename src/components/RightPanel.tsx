@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, selectOpenConversation, setPanelWidth, setTab, useStore, type PanelTab } from "../store";
+import { BookOpen } from "lucide-react";
+import {
+  PANEL_MIN_WIDTH,
+  panelMaxWidth,
+  refreshPanelWidth,
+  selectOpenConversation,
+  setPanelWidth,
+  setTab,
+  togglePanelMode,
+  useStore,
+  type PanelTab,
+} from "../store";
 import * as tree from "../tree";
 import { OutputPanel } from "./OutputPanel";
 import { ThreadPanel } from "./ThreadPanel";
-import { Skeleton } from "./ui";
+import { IconButton, Skeleton } from "./ui";
 
 // hidden: the start screen of a blank conversation is shown, the panel sits off screen.
 // shown:  the panel takes its width at the right of the window.
@@ -24,7 +35,14 @@ export function RightPanel() {
   const clipCount = useStore((s) => selectOpenConversation(s)?.clips.length ?? 0);
   const tab = useStore((s) => s.tab);
   const loadFailed = useStore((s) => s.openState.kind === "failed");
+  const reading = useStore((s) => s.panelMode === "reading");
   const [drag, setDrag] = useState<Drag>({ kind: "idle" });
+
+  // The panel's width follows the window (its default and its limits are shares of the window).
+  useEffect(() => {
+    window.addEventListener("resize", refreshPanelWidth);
+    return () => window.removeEventListener("resize", refreshPanelWidth);
+  }, []);
   const presence: Presence = convId !== undefined && blank ? "hidden" : "shown";
 
   const settled = useRef(false);
@@ -42,7 +60,7 @@ export function RightPanel() {
         aria-label="Thread and output"
         inert={presence === "hidden"}
         style={{ width }}
-        className="absolute inset-y-0 left-0 flex flex-col border-l border-line bg-bg"
+        className={`absolute inset-y-0 left-0 flex flex-col border-l border-line bg-bg ${animate ? "transition-[width] duration-300 ease-out-expo" : ""}`}
       >
         <ResizeHandle width={width} drag={drag} setDrag={setDrag} />
         <div role="tablist" aria-label="Panel" className="flex h-12 shrink-0 items-stretch gap-6 border-b border-line px-6">
@@ -55,6 +73,17 @@ export function RightPanel() {
                 Output
                 <ClipCount conversationId={convId} count={clipCount} />
               </Tab>
+              <span className="flex-1" />
+              <span className="flex items-center">
+                <IconButton
+                  icon={BookOpen}
+                  label={reading ? "Back to the normal width" : "Reading mode: a wide panel for long answers"}
+                  active={reading}
+                  data-testid="reading-mode"
+                  className="-mr-1.5"
+                  onClick={togglePanelMode}
+                />
+              </span>
             </>
           )}
         </div>
@@ -82,7 +111,7 @@ function Tab({ tab, active, testId, children }: { tab: PanelTab; active: boolean
       aria-selected={active}
       data-testid={testId}
       onClick={() => setTab(tab)}
-      className={`label relative flex items-center gap-2 transition-colors ${active ? "text-fg" : "hover:text-fg"}`}
+      className={`label relative flex items-center gap-2 transition-colors ${active ? "text-fg" : "text-muted hover:text-fg"}`}
     >
       {children}
       <span className={`absolute inset-x-0 -bottom-px h-[1.5px] bg-fg transition-opacity ${active ? "opacity-100" : "opacity-0"}`} aria-hidden />
@@ -128,7 +157,7 @@ function ResizeHandle({ width, drag, setDrag }: { width: number; drag: Drag; set
       aria-orientation="vertical"
       aria-label="Resize the panel"
       aria-valuemin={PANEL_MIN_WIDTH}
-      aria-valuemax={PANEL_MAX_WIDTH}
+      aria-valuemax={panelMaxWidth(window.innerWidth)}
       aria-valuenow={width}
       tabIndex={0}
       data-dragging={drag.kind === "dragging"}
@@ -148,7 +177,7 @@ function ResizeHandle({ width, drag, setDrag }: { width: number; drag: Drag; set
 }
 
 function MutedLine({ children }: { children: ReactNode }) {
-  return <div className="flex flex-1 items-center justify-center p-6 text-center text-[13.5px] text-faint">{children}</div>;
+  return <div className="flex flex-1 items-center justify-center p-6 text-center text-[13.5px] text-muted">{children}</div>;
 }
 
 function PanelSkeleton() {

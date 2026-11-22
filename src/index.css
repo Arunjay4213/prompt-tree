@@ -104,7 +104,7 @@ h3 {
 /* Mono uppercase label: metadata, counts, statuses */
 .label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.4;
   font-weight: 400;
   letter-spacing: 0.12em;
@@ -115,7 +115,7 @@ h3 {
 /* The smaller label used inside cards, tags and buttons */
 .label-sm {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.4;
   font-weight: 400;
   letter-spacing: 0.1em;
@@ -153,10 +153,10 @@ h3 {
     color 150ms;
 }
 .btn-sm {
-  height: 28px;
+  height: 30px;
   padding-inline: 10px;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .btn-primary {
   background: var(--color-fg);
@@ -192,8 +192,7 @@ h3 {
 /* The key hint inside a button inherits the button's text color */
 .btn .key-hint {
   margin-left: auto;
-  color: inherit;
-  opacity: 0.55;
+  color: color-mix(in srgb, currentColor 55%, transparent);
 }
 
 /* 28 by 28 icon-only button */
@@ -226,9 +225,12 @@ h3 {
   color: var(--color-fail);
 }
 
+/* Disabled: calmly inactive, never faded. The tooltip says why. */
 .btn[aria-disabled="true"],
 .icon-btn[aria-disabled="true"] {
-  opacity: 0.4;
+  background: var(--color-surface);
+  border-color: var(--color-surface);
+  color: var(--color-muted);
   cursor: not-allowed;
 }
 

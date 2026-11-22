@@ -1,5 +1,5 @@
 import { Copy } from "lucide-react";
-import { isValidElement, memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { isValidElement, memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import bash from "highlight.js/lib/languages/bash";
 import c from "highlight.js/lib/languages/c";
@@ -21,6 +21,54 @@ import { createLowlight } from "lowlight";
 import remarkGfm from "remark-gfm";
 import { copyWithToast } from "../store";
 import { IconButton } from "./ui";
+
+const SHORT_CELL = 24; // characters
+const MIN_COLUMN = 96; // px
+
+// fit:    every column fits at 96px or more and the wrapped table fits its column (short values never
+//         break, so they can need more), so the table takes the column's width.
+// scroll: it does not; the table keeps readable columns and scrolls inside its own box.
+type TableFit = "fit" | "scroll";
+// Whether a scrolling table has more to the right (then its right edge fades).
+type TableMore = "no" | "yes";
+
+function TableBlock({ children }: { children?: ReactNode }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState<TableFit>("fit");
+  const [more, setMore] = useState<TableMore>("no");
+  const [width, setWidth] = useState(0);
+  // A new width: try "fit" again; the check below falls back to "scroll" when it does not fit.
+  useLayoutEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const onScroll = () => setMore(el.scrollWidth - el.scrollLeft - el.clientWidth > 1 ? "yes" : "no");
+    const observer = new ResizeObserver(() => {
+      setWidth(el.clientWidth);
+      setFit("fit");
+    });
+    observer.observe(el);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const columns = el.querySelector("tr")?.children.length ?? 1;
+    if (fit === "fit" && (el.clientWidth < columns * MIN_COLUMN || el.scrollWidth > el.clientWidth + 1)) {
+      setFit("scroll");
+      return;
+    }
+    setMore(el.scrollWidth - el.scrollLeft - el.clientWidth > 1 ? "yes" : "no");
+  }, [fit, width]);
+  return (
+    <div ref={wrap} className="table-wrap" data-fit={fit} data-more={more}>
+      <table>{children}</table>
+    </div>
+  );
+}
 
 // Fenced code: a dark panel with a header strip that shows the language and a Copy button.
 // Long lines scroll inside the block; the block is never wider than the column.
@@ -48,15 +96,11 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
 const components: Components = {
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-  table: ({ children }) => (
-    <div className="table-wrap">
-      <table>{children}</table>
-    </div>
-  ),
-  // A cell grows to its text, up to a readable width, then wraps. The table scrolls sideways.
-  td: ({ children, style }) => (
+  table: ({ children }) => <TableBlock>{children}</TableBlock>,
+  // A short value (a number, a price, a word or two) never breaks inside; longer text wraps.
+  td: ({ children, style, node }) => (
     <td style={style}>
-      <div className="cell">{children}</div>
+      <div className={textOf(node as HastNode).trim().length <= SHORT_CELL ? "cell cell-short" : "cell"}>{children}</div>
     </td>
   ),
   a: ({ href, children }) => (

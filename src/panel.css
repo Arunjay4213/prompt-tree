@@ -5,8 +5,8 @@
 /* ---------- markdown (answers and the combined document) ---------- */
 
 .markdown {
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: 16px;
+  line-height: 1.65;
   color: var(--color-fg);
   overflow-wrap: anywhere;
   text-wrap: pretty;
@@ -40,17 +40,17 @@
   text-wrap: balance;
 }
 .markdown h1 {
-  font-size: 20px;
+  font-size: 22px;
   letter-spacing: -0.02em;
 }
 .markdown h2 {
-  font-size: 17px;
+  font-size: 19px;
 }
 .markdown h3,
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  font-size: 15px;
+  font-size: 17px;
 }
 .markdown ul,
 .markdown ol {
@@ -123,22 +123,34 @@
   padding: 1px 5px;
 }
 
-/* Tables scroll sideways inside their own box; cells break only between words. */
+/* Tables. data-fit="fit": the table takes its column's width and the cells wrap their text (short
+   values never break). data-fit="scroll": the columns cannot fit at 96px each, so the table keeps
+   readable columns and scrolls sideways inside its own box, with a faint fade at the right edge
+   while there is more to see (data-more). */
 .markdown .table-wrap {
   overflow-x: auto;
   max-width: 100%;
   border: 1px solid var(--color-line-soft);
   border-radius: var(--radius-cell);
 }
+.markdown .table-wrap[data-more="yes"] {
+  mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
+}
 .markdown table {
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.5;
+  width: 100%;
+}
+.markdown .table-wrap[data-fit="scroll"] table {
   width: max-content;
   min-width: 100%;
 }
-.markdown td > .cell {
+.markdown .table-wrap[data-fit="scroll"] td > .cell {
   max-width: 280px;
+}
+.markdown td > .cell-short {
+  white-space: nowrap;
 }
 .markdown th,
 .markdown td {
@@ -158,13 +170,15 @@
 }
 .markdown th {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 400;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--color-faint);
-  white-space: nowrap;
+  color: var(--color-muted);
   background: var(--color-bg);
+}
+.markdown .table-wrap[data-fit="scroll"] th {
+  white-space: nowrap;
 }
 
 /* Fenced code: dark panel with a header strip (language + copy button) */
@@ -204,7 +218,7 @@
   width: max-content;
   min-width: 100%;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.55;
   color: var(--color-panel-fg);
   white-space: pre;
@@ -280,40 +294,41 @@
   font-size: 12px;
 }
 
-/* ---------- turn action row ----------
-   Small mono text buttons under an answer: faint at rest, fg while the turn is hovered,
-   always fg on the last turn. */
-.turn-action {
+/* ---------- actions under an answer ----------
+   Real buttons: an icon and a sentence-case label, 13px, 30px tall, muted and fg on hover. */
+.action-btn {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: 30px;
   padding-inline: 8px;
   border-radius: var(--radius-cell);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 13px;
+  font-weight: 500;
   line-height: 1;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   white-space: nowrap;
-  color: var(--color-faint);
+  color: var(--color-muted);
   cursor: pointer;
   transition:
     background-color 150ms var(--ease-out-expo),
     color 150ms var(--ease-out-expo);
 }
-.turn:hover .turn-action,
-.turn:focus-within .turn-action,
-.turn[data-last="true"] .turn-action {
-  color: var(--color-fg);
-}
-.turn-action:not([aria-disabled="true"]):hover {
+.action-btn:not([aria-disabled="true"]):hover {
   background: var(--color-surface);
   color: var(--color-fg);
 }
-.turn-action[aria-disabled="true"] {
-  opacity: 0.4;
+/* The compact form on the sticky label row */
+.action-btn-row {
+  height: 26px;
+}
+.action-btn-on {
+  background: var(--color-accent-soft);
+  color: var(--color-fg);
+}
+.action-btn[aria-disabled="true"] {
+  background: var(--color-surface);
+  color: var(--color-muted);
   cursor: not-allowed;
 }
 

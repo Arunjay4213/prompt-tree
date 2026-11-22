@@ -114,7 +114,7 @@ function ClipCell({ conv, clip, index, count, pathNumber }: { conv: Conversation
             ref={setActivatorNodeRef}
             type="button"
             aria-label={`Reorder clip ${index + 1}`}
-            className={`-ml-1 flex h-7 w-5 items-center justify-center rounded-cell text-faint transition-colors hover:text-fg ${isDragging ? "cursor-grabbing text-fg" : "cursor-grab"}`}
+            className={`-ml-1 flex h-[30px] w-5 items-center justify-center rounded-cell text-muted transition-colors hover:text-fg ${isDragging ? "cursor-grabbing text-fg" : "cursor-grab"}`}
             {...attributes}
             {...listeners}
           >
@@ -124,16 +124,16 @@ function ClipCell({ conv, clip, index, count, pathNumber }: { conv: Conversation
         <span className="label-sm num w-6 text-fg">{String(index + 1).padStart(2, "0")}</span>
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex h-7 items-center gap-2">
+        <div className="flex h-[30px] items-center gap-2">
           <Tip content="Show this card on the canvas">
-            <button type="button" onClick={reveal} className="label-sm flex min-w-0 items-center gap-2 text-left transition-colors hover:text-fg">
-              <span className="num shrink-0 text-fg">{pathNumber}</span>
+            <button type="button" onClick={reveal} className="flex h-[30px] min-w-0 items-center gap-2 text-left text-[13px] font-medium text-muted transition-colors hover:text-fg">
+              <span className="label-sm num shrink-0 text-fg">{pathNumber}</span>
               <span className="min-w-0 truncate">{thread ? tree.threadTitle(thread) : "Unknown branch"}</span>
             </button>
           </Tip>
           {clip.kind === "excerpt" && <Tag>Excerpt</Tag>}
           <span className="flex-1" />
-          <span className="flex shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+          <span className="flex shrink-0">
             <IconButton icon={ArrowUp} label="Move up" disabledReason={index === 0 ? "Already first" : null} onClick={() => moveClipTo(clip.id, index - 1)} />
             <IconButton icon={ArrowDown} label="Move down" disabledReason={index === count - 1 ? "Already last" : null} onClick={() => moveClipTo(clip.id, index + 1)} />
             <IconButton icon={X} label="Remove from output" tone="danger" onClick={() => removeClip(clip.id)} />
@@ -141,10 +141,14 @@ function ClipCell({ conv, clip, index, count, pathNumber }: { conv: Conversation
         </div>
         {/* The clip as markdown (a clipped code block looks like code). Clamped: four lines high. */}
         <div ref={textRef} data-testid="clip-text" className={`clip-markdown mt-1 ${view === "clamped" ? "overflow-hidden" : ""}`}>
-          {text ? <Markdown text={text} /> : <p className="text-[13.5px] leading-[1.5] text-faint">The answer is empty.</p>}
+          {text ? <Markdown text={text} /> : <p className="text-[13.5px] leading-[1.5] text-muted">The answer is empty.</p>}
         </div>
         {(overflow === "overflows" || view === "expanded") && (
-          <button type="button" className="label-sm mt-2 transition-colors hover:text-fg" onClick={() => setView(view === "clamped" ? "expanded" : "clamped")}>
+          <button
+            type="button"
+            className="-ml-2 mt-1 h-[30px] rounded-cell px-2 text-[13px] font-medium text-muted transition-colors hover:bg-surface hover:text-fg"
+            onClick={() => setView(view === "clamped" ? "expanded" : "clamped")}
+          >
             {view === "clamped" ? "Show more" : "Show less"}
           </button>
         )}

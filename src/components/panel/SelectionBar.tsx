@@ -48,8 +48,9 @@ export function readAnswerSelection(content: HTMLElement, scroller: HTMLElement)
   const origin = content.getBoundingClientRect();
   const view = scroller.getBoundingClientRect();
   // Above the first line of the selection, or below its last line when the first line is too
-  // close to the top of the visible body.
-  const roomAbove = first.top - view.top >= BAR_HEIGHT + GAP + EDGE;
+  // close to the top of the visible body (below the answer's sticky label row, which stays on top).
+  const stickyRow = answer.closest(".turn")?.querySelector<HTMLElement>("[data-answer-row]")?.offsetHeight ?? 0;
+  const roomAbove = first.top - view.top >= stickyRow + BAR_HEIGHT + GAP + EDGE;
   const line = roomAbove ? first : last;
   return {
     kind: "shown",
@@ -105,7 +106,7 @@ export function SelectionBar({ state, threadId, onDone }: { state: BarState; thr
     >
       <button
         type="button"
-        className="label-sm rounded-l-cell px-3 whitespace-nowrap text-bg transition-colors hover:text-accent"
+        className="rounded-l-cell px-3 text-[13px] font-medium whitespace-nowrap text-bg transition-colors hover:text-accent"
         onClick={() => {
           const added = addExcerptClip(threadId, state.turnId, state.text);
           showToast(added === "added" ? "Added to output" : "Already in output");
@@ -119,7 +120,7 @@ export function SelectionBar({ state, threadId, onDone }: { state: BarState; thr
         <button
           type="button"
           aria-disabled={branchReason !== null || undefined}
-          className="label-sm rounded-r-cell px-3 whitespace-nowrap text-bg transition-colors hover:text-accent aria-disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:hover:text-bg"
+          className="rounded-r-cell px-3 text-[13px] font-medium whitespace-nowrap text-bg transition-colors hover:text-accent aria-disabled:cursor-not-allowed aria-disabled:text-faint aria-disabled:hover:text-faint"
           onClick={() => {
             if (branchReason !== null) return;
             const quote = state.text

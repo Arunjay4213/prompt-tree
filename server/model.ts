@@ -1,110 +1,74 @@
-// Produces one answer for /api/complete in the current server mode.
-// completeAnswer streams text through `onText` and returns how the answer ended (AnswerEnd),
-// so the route can send exactly one "done" or "error" event at the end.
+// The model registry: which models are available, the server mode, the default model, and
+// routing a model id (`<provider>:<model name>`) to its provider. Built once at startup from the
+// environment. Adding a provider is adding its file in providers/ and one entry in PROVIDERS.
 
-import OpenAI, { APIConnectionError, APIError, AuthenticationError, RateLimitError } from "openai";
-import type { CompleteRequest, ServerMode, StreamEvent } from "../shared/api";
+import type { ModelInfo, ServerMode } from "../shared/api";
+import { anthropic } from "./providers/anthropic";
+import type { AnswerEnd, OnText, Provider, ProviderRequest } from "./providers/common";
+import { compatible } from "./providers/compatible";
+import { demo } from "./providers/demo";
+import { openai } from "./providers/openai";
+import { loadOpencode } from "./providers/opencode";
 
-export const MODEL = process.env.OPENAI_MODEL ?? "gpt-6-luna";
+export type { AnswerEnd } from "./providers/common";
 
-export type TerminalEvent = Extract<StreamEvent, { type: "done" | "error" }>;
-type OnText = (text: string) => Promise<void>;
+// Order matters: it is the order of the model list and decides the default model.
+// opencode's models come from its local server, so they are loaded (once) before the server starts.
+const PROVIDERS: Provider[] = process.env.DEMO_MODE === "1" ? [demo] : [openai, anthropic, compatible, await loadOpencode()];
 
-// How an answer ends: one terminal event for the browser, or "disconnected" when the browser went away
-// and there is nobody left to send it to.
-export type AnswerEnd = TerminalEvent | { type: "disconnected" };
+export const ACTIVE_PROVIDERS = PROVIDERS.filter((provider) => provider.modelNames.length > 0);
 
+export const MODELS: ModelInfo[] = ACTIVE_PROVIDERS.flatMap((provider) =>
+  provider.modelNames.map((name) => ({
+    id: `${provider.id}:${name}`,
+    name,
+    provider: provider.id,
+    providerName: provider.label,
+  })),
+);
+
+export const MODE: ServerMode =
+  process.env.DEMO_MODE === "1" ? "demo" : MODELS.length > 0 ? "live" : "no_key";
+
+export const DEFAULT_MODEL: string | null =
+  MODELS.find((model) => model.id === process.env.DEFAULT_MODEL)?.id ?? MODELS[0]?.id ?? null;
+
+// Where a completion request goes.
+// no_provider:   nothing is configured; the answer is a single error event that says how to fix it
+// model:         a known model and the provider that serves it
+// unknown_model: the id is not in MODELS; the route answers 400 before any stream starts
+export type Route =
+  | { kind: "no_provider" }
+  | { kind: "model"; provider: Provider; modelName: string }
+  | { kind: "unknown_model" };
+
+export function routeModel(id: string): Route {
+  if (MODE === "no_key") return { kind: "no_provider" };
+  const separator = id.indexOf(":");
+  const provider = ACTIVE_PROVIDERS.find((candidate) => candidate.id === id.slice(0, separator));
+  const modelName = id.slice(separator + 1);
+  if (separator < 0 || provider === undefined || !provider.modelNames.includes(modelName)) {
+    return { kind: "unknown_model" };
+  }
+  return { kind: "model", provider, modelName };
+}
+
+// Streams text through `onText` and returns how the answer ended (AnswerEnd), so the route can send
+// exactly one "done" or "error" event at the end.
 export function completeAnswer(
-  mode: ServerMode,
-  request: CompleteRequest,
+  route: Exclude<Route, { kind: "unknown_model" }>,
+  request: ProviderRequest,
   onText: OnText,
   signal: AbortSignal,
 ): Promise<AnswerEnd> {
-  switch (mode) {
-    case "demo":
-      return completeDemo(request, onText, signal);
-    case "no_key":
+  switch (route.kind) {
+    case "no_provider":
       return Promise.resolve({
         type: "error",
-        message: "No OpenAI API key is configured. Put OPENAI_API_KEY in the .env file and restart the server, or run `pnpm dev:demo` for placeholder answers.",
+        message:
+          "No model provider is configured. In the .env file set OPENAI_API_KEY, or ANTHROPIC_API_KEY, or COMPATIBLE_BASE_URL with COMPATIBLE_MODELS, then restart the server. Or run `pnpm dev:demo` for placeholder answers.",
       });
-    case "live":
-      return completeLive(request, onText, signal);
-  }
-}
-
-async function completeDemo(request: CompleteRequest, onText: OnText, signal: AbortSignal): Promise<AnswerEnd> {
-  const prompt = request.messages.at(-1)?.content ?? "";
-  const quoted = prompt.trim().split("\n").map((line) => `> ${line}`).join("\n");
-  const intro = request.system === undefined
-    ? "This is a placeholder answer from demo mode. No model was called and no money was spent."
-    : "This is a placeholder for the combined document. In live mode the model would merge the clips into one final document.";
-  const text = [
-    `**Demo answer** (turn ${Math.ceil(request.messages.length / 2)}) to:`,
-    quoted,
-    intro + " The text streams in small pieces so the interface behaves like it does with a real model.",
-    "- Each branch only sees its own path back to the root.\n- Continue a card, or branch off to explore a side question.\n- Clip the parts you want for the final output.",
-    "```ts\nfunction greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n```",
-    "End of the placeholder answer.",
-  ].join("\n\n");
-
-  // About 100 chunks at 20 ms each: roughly 2 seconds in total.
-  const chunkSize = Math.max(4, Math.ceil(text.length / 100));
-  for (let start = 0; start < text.length; start += chunkSize) {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    if (signal.aborted) return { type: "disconnected" };
-    await onText(text.slice(start, start + chunkSize));
-  }
-  return { type: "done", outcome: "complete" };
-}
-
-// The SDK reads OPENAI_API_KEY from the environment. Created on first use so other modes never need a key.
-let client: OpenAI | undefined;
-
-async function completeLive(request: CompleteRequest, onText: OnText, signal: AbortSignal): Promise<AnswerEnd> {
-  client ??= new OpenAI();
-  try {
-    const stream = await client.responses.create(
-      { model: MODEL, instructions: request.system, input: request.messages, stream: true },
-      { signal },
-    );
-    for await (const event of stream) {
-      switch (event.type) {
-        case "response.output_text.delta":
-          await onText(event.delta);
-          break;
-        case "response.refusal.done":
-          return { type: "error", message: `The model declined to answer: ${event.refusal}` };
-        case "response.completed":
-          return { type: "done", outcome: "complete" };
-        case "response.incomplete": {
-          const reason = event.response.incomplete_details?.reason ?? "unknown";
-          if (reason === "max_output_tokens") return { type: "done", outcome: "cut_off" };
-          return { type: "error", message: `The answer stopped early (reason: ${reason}).` };
-        }
-        case "response.failed":
-          return { type: "error", message: `The model call failed: ${event.response.error?.message ?? "no reason given"}` };
-        case "error":
-          return { type: "error", message: `The model API reported an error: ${event.message}` };
-      }
-    }
-    if (signal.aborted) return { type: "disconnected" };
-    return { type: "error", message: "The model stream ended without a final event." };
-  } catch (err) {
-    if (signal.aborted) return { type: "disconnected" };
-    if (err instanceof AuthenticationError) {
-      return { type: "error", message: "The OpenAI API key was rejected. Check OPENAI_API_KEY in the .env file and restart the server." };
-    }
-    if (err instanceof RateLimitError) {
-      return { type: "error", message: "OpenAI rate limit or quota reached. Wait a moment and retry, or check the account's billing." };
-    }
-    if (err instanceof APIConnectionError) {
-      return { type: "error", message: "Could not reach the OpenAI API. Check the internet connection and retry." };
-    }
-    if (err instanceof APIError) {
-      return { type: "error", message: `The OpenAI API returned an error: ${err.message}` };
-    }
-    console.error("Unexpected error during model call:", err);
-    return { type: "error", message: "Unexpected server error during the model call. See the server log." };
+    case "model":
+      return route.provider.complete(route.modelName, request, onText, signal);
   }
 }

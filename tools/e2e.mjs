@@ -14,6 +14,7 @@ try {
   const res = await fetch(`${URL}/api/health`, { signal: AbortSignal.timeout(3000) });
   const health = await res.json();
   if (health.mode !== "demo") throw new Error(`the server runs in "${health.mode}" mode`);
+  if (!Array.isArray(health.models) || health.models.length < 2) throw new Error("the server does not list the two demo models");
 } catch (err) {
   console.error(`The app does not answer in demo mode at ${URL} (${err.message}).`);
   console.error("Start it with `pnpm dev:demo` and run `pnpm e2e` again.");
@@ -77,6 +78,8 @@ async function flow(name, fn) {
   } catch (err) {
     ok = false;
     detail = err.message.split("\n")[0];
+    // Set E2E_SHOT_DIR to keep a screenshot of each failed flow.
+    if (process.env.E2E_SHOT_DIR) await page.screenshot({ path: `${process.env.E2E_SHOT_DIR}/fail-${name.split(" ")[0]}.png` }).catch(() => {});
   }
   await page.waitForTimeout(150);
   if (problems.length > 0) {
@@ -178,7 +181,9 @@ await flow("a first prompt on the start screen", async () => {
   await page.waitForSelector(".live-dot");
   await settle();
   await page.waitForTimeout(400);
-  check((await panelWidth()) === 480, `panel width after the first prompt is ${await panelWidth()}`);
+  // The default width: half of the area right of the sidebar (248px), between 560 and 820.
+  const expectedWidth = Math.round(Math.min(820, Math.max(560, (1600 - 248) / 2)));
+  check((await panelWidth()) === expectedWidth, `panel width after the first prompt is ${await panelWidth()}, not ${expectedWidth}`);
   mainId = await openId();
   const conv = await saved(mainId);
   root = conv.threads[0];
@@ -256,16 +261,22 @@ await flow("e path marking and keyboard selection", async () => {
 
 await flow("f fold, hide branches, fold all", async () => {
   await select(ids.ROOT);
-  const body = () => card(ids.ROOT).locator(".pt-body").count();
-  await card(ids.ROOT).getByTestId("card-fold").click();
-  check((await body()) === 0, "the card did not fold");
-  await card(ids.ROOT).getByTestId("card-fold").click();
-  check((await body()) === 1, "the card did not open");
-  await page.getByRole("button", { name: "Hide branches" }).click();
+  // Fold and open through the panel's card menu ("Collapse card" / "Expand card"); the card's own
+  // fold button can be hidden when "fit" zooms into the overview look.
+  const rootView = async () => (await saved(mainId)).threads[0].cardView;
+  await page.getByTestId("header-menu").click();
+  await page.getByTestId("header-fold").click();
+  check((await rootView()) === "folded", "the card did not fold");
+  await page.getByTestId("header-menu").click();
+  await page.getByTestId("header-fold").click();
+  check((await rootView()) === "open", "the card did not open");
+  await page.getByTestId("header-menu").click();
+  await page.getByTestId("header-branches").click();
   await page.waitForTimeout(400);
   check((await visibleCards()).length === 1, "branches are still drawn");
-  check((await card(ids.ROOT).innerText()).includes("+3 HIDDEN"), "no +3 hidden tag");
-  await page.getByRole("button", { name: "Show branches" }).click();
+  check((await saved(mainId)).threads[0].branchesView === "hidden", "hidden branches were not saved");
+  await page.getByTestId("header-menu").click();
+  await page.getByTestId("header-branches").click();
   await page.waitForTimeout(400);
   check((await visibleCards()).length === 4, "branches did not come back");
   await page.getByRole("button", { name: "Fold all cards" }).click();
@@ -281,10 +292,12 @@ await flow("f fold, hide branches, fold all", async () => {
 await flow("g split off then merge into parent", async () => {
   const before = await saved(mainId);
   await select(ids.ROOT);
-  await panelTurn(root.turns[2].id).getByTestId("turn-split").click();
+  await panelTurn(root.turns[2].id).getByTestId("turn-more").click();
+  await page.getByTestId("turn-split").click();
   let conv = await saved(mainId);
   check(conv.threads.length === before.threads.length + 1 && conv.threads[0].turns.length === 2, "split did not make a new card");
-  await page.getByRole("button", { name: "Merge into parent" }).click();
+  await page.getByTestId("header-menu").click();
+  await page.getByTestId("header-merge").click();
   conv = await saved(mainId);
   check(normalized(conv) === normalized(before), "the saved JSON differs from before the split");
   return "identical saved JSON after split and merge";
@@ -335,7 +348,8 @@ await flow("j delete a branch with a child and a clip", async () => {
   await panelTurn((await api.get(mainId)).threads.find((t) => t.id === ids["1"]).turns[0].id).getByTestId("turn-clip").click();
   let conv = await saved(mainId);
   check(conv.clips.length === 3, "the clip was not added");
-  await page.getByRole("button", { name: "Delete card" }).click();
+  await page.getByTestId("header-menu").click();
+  await page.getByTestId("header-delete").click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
   conv = await saved(mainId);
   check(conv.threads.length === 2, `${conv.threads.length} threads left`);
@@ -347,8 +361,8 @@ await flow("j delete a branch with a child and a clip", async () => {
 });
 
 await flow("k switching conversations keeps an answer streaming", async () => {
-  const other = { id: randomUUID(), title: `${TITLE}other`, createdAt: Date.now(), updatedAt: Date.now(), clips: [], output: { status: "empty", text: "", instruction: "", error: null } };
-  other.threads = [{ id: randomUUID(), parent: null, title: other.title, cardView: "open", branchesView: "shown", createdAt: Date.now(), turns: [{ id: randomUUID(), prompt: "Hi", answer: "Hello.", status: "complete", error: null, createdAt: Date.now() }] }];
+  const other = { id: randomUUID(), title: `${TITLE}other`, createdAt: Date.now(), updatedAt: Date.now(), clips: [], output: { status: "empty", text: "", instruction: "", error: null, model: null } };
+  other.threads = [{ id: randomUUID(), parent: null, title: other.title, cardView: "open", branchesView: "shown", createdAt: Date.now(), turns: [{ id: randomUUID(), prompt: "Hi", answer: "Hello.", status: "complete", error: null, model: null, createdAt: Date.now() }] }];
   await api.put(other);
   await page.reload();
   await page.waitForSelector(`[data-conversation-id="${other.id}"]`);
@@ -361,7 +375,7 @@ await flow("k switching conversations keeps an answer streaming", async () => {
   await page.waitForTimeout(3500);
   const conv = await api.get(mainId);
   const last = conv.threads[0].turns.at(-1);
-  check(last.status === "complete" && last.answer.includes("End of the placeholder answer."), `background turn is ${last.status}`);
+  check(last.status === "complete" && last.answer.includes("End of the placeholder answer from"), `background turn is ${last.status}`);
   await openConversation(mainId);
   root = conv.threads[0];
   return "completed and saved in the background";
@@ -383,7 +397,7 @@ await flow("l stop then retry", async () => {
   await settle();
   conv = await saved(mainId);
   last = conv.threads[0].turns.at(-1);
-  check(last.status === "complete" && last.answer.includes("End of the placeholder answer."), `after Retry the turn is ${last.status}`);
+  check(last.status === "complete" && last.answer.includes("End of the placeholder answer from"), `after Retry the turn is ${last.status}`);
   root = conv.threads[0];
   return "stopped with partial text, retried to complete";
 });
@@ -410,6 +424,8 @@ await flow("m delete a conversation right after sending", async () => {
 
 await flow("n sidebar and panel width survive a reload", async () => {
   await page.getByRole("button", { name: "Hide sidebar" }).click();
+  await page.waitForTimeout(400);
+  const start = await panelWidth();
   const handle = page.getByRole("separator", { name: "Resize the panel" });
   const box = await handle.boundingBox();
   await page.mouse.move(box.x + 3, box.y + 300);
@@ -417,18 +433,18 @@ await flow("n sidebar and panel width survive a reload", async () => {
   await page.mouse.move(box.x - 97, box.y + 300, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
-  check((await panelWidth()) === 580, `panel width after dragging is ${await panelWidth()}`);
+  check((await panelWidth()) === start + 100, `panel width after dragging is ${await panelWidth()}, not ${start + 100}`);
   await page.reload();
   await page.waitForSelector("article[data-testid^='card-']");
   await page.waitForTimeout(500);
   const sidebar = await page.locator('aside[aria-label="Conversations"]').evaluate((el) => el.getBoundingClientRect().width);
   check(sidebar === 0, `sidebar is ${sidebar}px wide after reload`);
-  check((await panelWidth()) === 580, `panel is ${await panelWidth()}px after reload`);
+  check((await panelWidth()) === start + 100, `panel is ${await panelWidth()}px after reload`);
   await page.getByRole("button", { name: "Show sidebar" }).click();
-  await page.evaluate(() => localStorage.setItem("prompt-tree:panel-width", "480"));
+  await page.evaluate(() => localStorage.removeItem("prompt-tree:panel-width"));
   await page.reload();
   await page.waitForSelector("article[data-testid^='card-']");
-  return "collapsed sidebar and 580px panel kept";
+  return `collapsed sidebar and ${start + 100}px panel kept`;
 });
 
 await flow("o rename the conversation and a thread", async () => {
@@ -488,6 +504,145 @@ await flow("p geometry", async () => {
   check(result.cards === 4 && result.edges === 3, `${result.cards} cards and ${result.edges} edges`);
   check(result.issues.length === 0, result.issues.join(", "));
   return `${result.cards} cards, ${result.edges} edges, no overlap, edges on ports and headers`;
+});
+
+await flow("q a different model per branch", async () => {
+  const pick = async (id) => {
+    await page.getByTestId("model-picker").first().click();
+    await page.getByTestId(`model-option-${id}`).click();
+    await page.waitForTimeout(150);
+  };
+  await page.keyboard.press("Alt+n");
+  await page.getByLabel("First question").waitFor();
+  await pick("demo:placeholder-a");
+  await page.getByLabel("First question").fill(`${TITLE}models: answered by A`);
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("article[data-testid^='card-']");
+  await settle();
+  await pick("demo:placeholder-b");
+  await send("Branched off and answered by B", "Control+Enter");
+  const conv = await saved();
+  const [rootThread, branch] = conv.threads;
+  const a = rootThread.turns[0];
+  const b = branch.turns[0];
+  check(a.model === "demo:placeholder-a" && b.model === "demo:placeholder-b", `saved models ${a.model} and ${b.model}`);
+  check(b.answer.includes("placeholder-b") && a.answer.includes("placeholder-a"), "each answer names its model");
+  const label = async (threadId, turnId) => {
+    await select(threadId);
+    return (await panelTurn(turnId).getByTestId("turn-model").innerText()).trim();
+  };
+  check((await label(branch.id, b.id)) === "PLACEHOLDER-B", "branch label");
+  check((await label(rootThread.id, a.id)) === "PLACEHOLDER-A", "root label");
+  await page.reload();
+  await page.waitForSelector("article[data-testid^='card-']");
+  await page.waitForTimeout(500);
+  check((await label(branch.id, b.id)) === "PLACEHOLDER-B" && (await label(rootThread.id, a.id)) === "PLACEHOLDER-A", "labels after reload");
+  check((await page.getByTestId("model-picker").first().innerText()).trim() === "placeholder-b", "the choice survives the reload");
+  await pick("demo:placeholder-a"); // leave the default choice for the next run
+  return "A on the root, B on the branch, labels and choice kept after reload";
+});
+
+// An answer with three option headings, for the option flows.
+const OPTIONS = ["Option 1: Trains", "Option 2: Car", "Option 3: Bus"];
+const OPTIONS_ANSWER = `Three ways:\n\n${OPTIONS.map((o) => `### ${o}\n\n- one detail\n- another detail`).join("\n\n")}`;
+function seedOptions(title) {
+  const c = { id: randomUUID(), title: `${TITLE}${title}`, titleSource: "user", createdAt: Date.now(), updatedAt: Date.now(), clips: [], output: { status: "empty", text: "", instruction: "", error: null, model: null } };
+  c.threads = [{ id: randomUUID(), parent: null, title: c.title, titleSource: "user", cardView: "open", branchesView: "shown", createdAt: Date.now(), turns: [{ id: randomUUID(), prompt: "How should I travel?", answer: OPTIONS_ANSWER, status: "complete", error: null, model: "demo:placeholder-a", createdAt: Date.now() }] }];
+  return c;
+}
+
+await flow("r New branch with an empty box; an empty branch with a draft is kept", async () => {
+  await openConversation(mainId);
+  await select(ids.ROOT);
+  const before = (await saved(mainId)).threads.length;
+  await composer().fill("");
+  await page.getByTestId("composer-branch").click();
+  await page.waitForTimeout(300);
+  check((await page.getByTestId("thread-title").innerText()) === "New branch", "no empty branch is selected");
+  check(await composer().evaluate((el) => el === document.activeElement), "the new branch's box is not focused");
+  await composer().fill("A draft for later");
+  await page.waitForTimeout(600);
+  await select(ids.ROOT);
+  let conv = await saved(mainId);
+  const kept = conv.threads.find((t) => t.turns.length === 0);
+  check(conv.threads.length === before + 1 && kept, "the empty branch with a draft was discarded");
+  await select(kept.id);
+  check((await composer().inputValue()) === "A draft for later", "its draft is gone");
+  await composer().fill("");
+  await select(ids.ROOT);
+  conv = await saved(mainId);
+  check(conv.threads.length === before, "an empty branch without a draft stayed");
+  return "empty branch made and focused; kept with a draft, dropped without";
+});
+
+await flow("s Branch per option: one, then all", async () => {
+  const c = seedOptions("options");
+  await api.put(c);
+  await page.reload();
+  await page.waitForSelector(`[data-conversation-id="${c.id}"]`);
+  await openConversation(c.id);
+  const last = c.threads[0].turns[0];
+  const turn = panelTurn(last.id);
+  check((await turn.getByTestId("option-block").count()) === 1, "no option block under the answer");
+  await turn.getByTestId("option-0").click();
+  await page.waitForTimeout(300);
+  check((await page.getByTestId("thread-title").innerText()) === OPTIONS[0], "the branch is not titled with the option");
+  check((await composer().inputValue()) === `> ${OPTIONS[0]}\n\n`, "the draft is not the quoted option");
+  const branchCard = (await saved(c.id)).threads.find((t) => t.title === OPTIONS[0]);
+  check((await card(branchCard.id).locator("header").innerText()).includes(OPTIONS[0]), "the empty option card does not show its title");
+  await select(c.threads[0].id);
+  check((await panelTurn(last.id).getByTestId("option-0").getAttribute("data-has-branch")) === "yes", "option 1 is not shown as a link");
+  await panelTurn(last.id).getByTestId("options-branch-all").click();
+  await page.waitForTimeout(400);
+  check((await page.getByTestId("thread-title").innerText()) === OPTIONS[0], "Branch all did not select the first option's branch");
+  const conv = await saved(c.id);
+  const optionThreads = conv.threads.filter((t) => t.parent?.turnId === last.id && OPTIONS.includes(t.title));
+  check(optionThreads.length === 3 && optionThreads.every((t) => t.titleSource === "user"), `${optionThreads.length} option branches`);
+  return "one branch from an option (its card shows the title), then the other two with Branch all";
+});
+
+await flow("t reading mode survives a reload", async () => {
+  await page.getByTestId("reading-mode").click();
+  await page.waitForTimeout(450);
+  const wide = Math.floor(1600 * 0.7);
+  check((await panelWidth()) === wide, `reading width ${await panelWidth()}, not ${wide}`);
+  await page.reload();
+  await page.waitForSelector("article[data-testid^='card-']");
+  await page.waitForTimeout(500);
+  check((await panelWidth()) === wide, `after reload ${await panelWidth()}`);
+  await page.getByTestId("reading-mode").click();
+  await page.waitForTimeout(450);
+  check((await panelWidth()) < wide, "the normal width did not come back");
+  return `${wide}px, kept after reload, back to normal`;
+});
+
+await flow("u Ask each splits one question across the options", async () => {
+  const c = { id: randomUUID(), title: `${TITLE}ask each`, titleSource: "user", createdAt: Date.now(), updatedAt: Date.now(), clips: [], output: { status: "empty", text: "", instruction: "", error: null, model: null } };
+  const answer = "Two ways:\n\n### Option 1: Trains\n\n- fast\n- scenic\n\n### Option 2: Car\n\n- flexible\n- cheap";
+  c.threads = [{ id: randomUUID(), parent: null, title: c.title, titleSource: "user", cardView: "open", branchesView: "shown", createdAt: Date.now(), turns: [{ id: randomUUID(), prompt: "How should I travel?", answer, status: "complete", error: null, model: "demo:placeholder-a", createdAt: Date.now() }] }];
+  await api.put(c);
+  await page.reload();
+  await page.waitForSelector(`[data-conversation-id="${c.id}"]`);
+  await openConversation(c.id);
+  await composer().fill("What does each cost?");
+  const button = page.getByTestId("composer-ask-each");
+  check((await button.innerText()).includes("2"), "Ask each does not show the option count");
+  await button.click();
+  await page.waitForSelector(".live-dot");
+  await settle();
+  const conv = await saved(c.id);
+  const kids = conv.threads.filter((t) => t.parent?.turnId === c.threads[0].turns[0].id);
+  check(kids.length === 2, `${kids.length} branches`);
+  check(kids.map((k) => k.title).join(" | ") === "Option 1: Trains | Option 2: Car", `titles ${kids.map((k) => k.title).join(" | ")}`);
+  check(kids.every((k, i) => k.turns[0].prompt === `> ${["Option 1: Trains", "Option 2: Car"][i]}\n\nWhat does each cost?`), "the prompts are not the quoted option plus the question");
+  check(kids.every((k) => k.turns[0].status === "complete" && k.turns[0].answer.includes("(turn 2)")), "an answer did not complete with the path through the parent turn");
+  check((await page.getByTestId("thread-title").innerText()) === "Option 1: Trains", "the first new branch is not selected");
+  check((await composer().inputValue()) === "", "the box was not cleared");
+  await page.reload();
+  await page.waitForSelector("article[data-testid^='card-']");
+  const again = await api.get(c.id);
+  check(again.threads.length === 3, "the branches did not survive a reload");
+  return "two option branches, quoted prompts, both answered, kept after reload";
 });
 
 await deleteOurConversations();

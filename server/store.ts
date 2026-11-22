@@ -1,13 +1,16 @@
-// JSON file store for conversations: data/conversations/<id>.json under the project root.
+// JSON file store for conversations: <folder>/<id>.json under the project root, where the folder is
+// data/demo in demo mode and data/conversations in every other mode, so placeholder and test
+// conversations never mix with real ones. The folder is chosen once at startup from the mode.
 // The server stores each conversation exactly as the web app sent it and never edits it.
 
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { ConversationSummary } from "../shared/api";
+import { MODE } from "./model";
 
 export const PROJECT_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const CONVERSATIONS_DIR = join(PROJECT_ROOT, "data", "conversations");
+const CONVERSATIONS_DIR = join(PROJECT_ROOT, "data", MODE === "demo" ? "demo" : "conversations");
 
 // Callers must validate `id` with CONVERSATION_ID_PATTERN first.
 function conversationPath(id: string): string {

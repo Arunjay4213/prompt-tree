@@ -1,4 +1,4 @@
-// prompt-tree server: a stateless streaming proxy to the model plus a JSON file store.
+// prompt-tree server: a stateless streaming proxy to the model providers plus a JSON file store.
 // The HTTP contract is in shared/api.ts.
 
 import { existsSync } from "node:fs";
@@ -9,14 +9,12 @@ import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { CONVERSATION_ID_PATTERN } from "../shared/api";
-import type { CompleteRequest, Health, SaveConflict, ServerMode, StreamEvent } from "../shared/api";
-import { completeAnswer, MODEL } from "./model";
+import type { CompleteRequest, Health, SaveConflict, StreamEvent } from "../shared/api";
+import { ACTIVE_PROVIDERS, completeAnswer, DEFAULT_MODEL, MODE, MODELS, routeModel } from "./model";
 import { deleteConversation, listConversations, PROJECT_ROOT, readConversation, saveConversation } from "./store";
 import type { BaseVersion } from "./store";
 
 const PORT = Number(process.env.PORT ?? 8787);
-const MODE: ServerMode =
-  process.env.DEMO_MODE === "1" ? "demo" : process.env.OPENAI_API_KEY ? "live" : "no_key";
 
 const app = new Hono();
 
@@ -24,7 +22,7 @@ function badRequest(c: Context, error: string) {
   return c.json({ error }, 400);
 }
 
-app.get("/api/health", (c) => c.json<Health>({ mode: MODE, model: MODEL }));
+app.get("/api/health", (c) => c.json<Health>({ mode: MODE, models: MODELS, defaultModel: DEFAULT_MODEL }));
 
 app.get("/api/conversations", async (c) => c.json(await listConversations()));
 
@@ -79,7 +77,8 @@ app.delete("/api/conversations/:id", async (c) => {
 // Returns a readable problem with the request, or null when it is a valid CompleteRequest.
 function completeRequestProblem(body: unknown): string | null {
   if (typeof body !== "object" || body === null) return "Body must be a JSON object.";
-  const { system, messages } = body as Record<string, unknown>;
+  const { model, system, messages } = body as Record<string, unknown>;
+  if (typeof model !== "string") return "model must be a model id string (see GET /api/health).";
   if (system !== undefined && typeof system !== "string") return "system must be a string.";
   if (!Array.isArray(messages) || messages.length === 0) return "messages must be a non-empty array.";
   for (const message of messages as unknown[]) {
@@ -96,12 +95,14 @@ app.post("/api/complete", async (c) => {
   const problem = completeRequestProblem(body);
   if (problem !== null) return badRequest(c, problem);
   const request = body as CompleteRequest;
+  const route = routeModel(request.model);
+  if (route.kind === "unknown_model") return badRequest(c, `Unknown model "${request.model}". Available models are listed in GET /api/health.`);
   // Aborted by the node server when the browser closes the connection.
   const signal = c.req.raw.signal;
 
   return streamSSE(c, async (stream) => {
     const send = (event: StreamEvent) => stream.writeSSE({ data: JSON.stringify(event) });
-    const end = await completeAnswer(MODE, request, (text) => send({ type: "text", text }), signal);
+    const end = await completeAnswer(route, { system: request.system, messages: request.messages }, (text) => send({ type: "text", text }), signal);
     if (end.type !== "disconnected") await send(end);
   });
 });
@@ -119,5 +120,6 @@ if (existsSync(join(DIST_DIR, "index.html"))) {
 app.notFound((c) => c.json({ error: "Not found." }, 404));
 
 serve({ fetch: app.fetch, hostname: "127.0.0.1", port: PORT }, (info) => {
-  console.log(`prompt-tree server: mode ${MODE}, model ${MODEL}, http://127.0.0.1:${info.port}`);
+  const counts = ACTIVE_PROVIDERS.map((provider) => `${provider.label} ${provider.modelNames.length}`).join(", ") || "none";
+  console.log(`prompt-tree server: mode ${MODE}, models: ${counts}, http://127.0.0.1:${info.port}`);
 });

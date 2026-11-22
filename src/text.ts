@@ -1,4 +1,8 @@
-// Text helpers shared by components: previews, relative times, clipboard, download.
+// Text helpers shared by components: previews, relative times, clipboard, download, the options of
+// an answer, and the pure parts of "Ask each".
+
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 // Markdown to a plain one-paragraph preview, for the canvas cards and the clip list.
 // Code blocks are left out, table rows become "cell · cell", and every other markup mark is
@@ -77,4 +81,145 @@ export function downloadText(filename: string, text: string) {
 // "1 turn", "3 turns"
 export function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+// The name shown for a model id: the part after "<provider>:" ("openai:model-x" -> "model-x").
+// Answers saved before models were recorded (null) show "Assistant".
+export function modelName(id: string | null): string {
+  if (id === null) return "Assistant";
+  const colon = id.indexOf(":");
+  return colon >= 0 ? id.slice(colon + 1) : id;
+}
+
+// ---------- options in an answer ----------
+
+// The few mdast node fields used here.
+type MdNode = { type: string; depth?: number; ordered?: boolean | null; value?: string; children?: MdNode[] };
+
+const parser = unified().use(remarkParse);
+const OPTIONS_MIN = 2;
+const OPTIONS_MAX = 8;
+
+// Plain text of a node: its text and inline code, without markdown marks.
+function plainOf(node: MdNode): string {
+  if (node.type === "text" || node.type === "inlineCode") return node.value ?? "";
+  return (node.children ?? []).map(plainOf).join("");
+}
+
+function firstWords(text: string, count: number): string {
+  const words = text.replace(/\s+/g, " ").trim().split(" ");
+  return words.length > count ? `${words.slice(0, count).join(" ")}...` : words.join(" ");
+}
+
+function startsWithBold(item: MdNode): boolean {
+  const first = item.children?.[0];
+  return first?.type === "paragraph" && first.children?.[0]?.type === "strong";
+}
+
+// The title of a list item: its leading bold text when it starts with bold, else its first eight words.
+function itemTitle(item: MdNode): string {
+  const first = item.children?.[0];
+  const lead = first?.type === "paragraph" ? first.children?.[0] : undefined;
+  if (lead?.type === "strong") return plainOf(lead).replace(/[\s:.-]+$/, "").trim();
+  return firstWords(first ? plainOf(first) : plainOf(item), 8);
+}
+
+// The options an answer offers, as titles: two to eight headings of one level (the shallowest level
+// that has at least two), else the items of the first top-level list with two to eight items when
+// it is numbered or every item starts with bold text, else none. Code blocks and tables never count: the markdown parser sees them for what they are.
+function findOptions(markdown: string): string[] {
+  const root = parser.parse(markdown) as MdNode;
+  const top = root.children ?? [];
+  const headings = top.filter((n) => n.type === "heading");
+  for (let depth = 1; depth <= 6; depth++) {
+    const level = headings.filter((h) => h.depth === depth);
+    if (level.length < OPTIONS_MIN) continue;
+    if (level.length <= OPTIONS_MAX) return level.map((h) => plainOf(h).trim()).filter(Boolean);
+    break; // too many to be options: try the list rule
+  }
+  // A list counts only when it names options: a numbered list, or one whose every item starts with
+  // bold text (the option's name). A plain bulleted list of facts is not a set of options.
+  const list = top.find((n) => n.type === "list");
+  const items = list?.children ?? [];
+  if (items.length < OPTIONS_MIN || items.length > OPTIONS_MAX) return [];
+  if (list?.ordered || items.every(startsWithBold)) return items.map(itemTitle).filter(Boolean);
+  return [];
+}
+
+// Memoized per answer text: an answer is parsed once, not on every render.
+const optionCache = new Map<string, string[]>();
+const OPTION_CACHE_MAX = 300;
+
+export function answerOptions(markdown: string): string[] {
+  const cached = optionCache.get(markdown);
+  if (cached) return cached;
+  const options = findOptions(markdown);
+  if (optionCache.size >= OPTION_CACHE_MAX) optionCache.delete(optionCache.keys().next().value!);
+  optionCache.set(markdown, options);
+  return options;
+}
+
+// ---------- "Ask each" ----------
+
+// Whether a question refers to every option ("each", "every", "both", "all of them", "all the
+// options", "all three"...), as whole words, any case. Only a hint for which button looks primary.
+export function refersToEach(text: string): boolean {
+  return /\b(each|every|both|all\s+of\s+them|all\s+(the\s+)?options|all\s+(two|three|four|five|six|seven|eight))\b/i.test(text);
+}
+
+export const REWRITE_SYSTEM =
+  "You rewrite one follow-up question so it can be asked separately about each option in an assistant answer. Reply with only a JSON array of strings, one per option, in the same order as the options given. Each string is the follow-up rewritten to ask about only that option, naming the option, and complete enough to be understood on its own. No other text.";
+const REWRITE_ANSWER_CHARS = 6000;
+
+// The one user message of the rewrite request.
+export function rewriteMessage(answer: string, options: string[], question: string): string {
+  return [
+    `The assistant answer:\n\n${answer.slice(0, REWRITE_ANSWER_CHARS)}`,
+    `The options, in order:\n${options.map((o, i) => `${i + 1}. ${o}`).join("\n")}`,
+    `The follow-up question:\n${question}`,
+  ].join("\n\n---\n\n");
+}
+
+// The rewritten prompts, or null unless the reply is exactly `count` non-empty strings as a JSON
+// array (a surrounding code fence is allowed).
+export function parseRewrite(reply: string, count: number): string[] | null {
+  const body = reply.trim().replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "").trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length !== count) return null;
+  if (!parsed.every((p) => typeof p === "string" && p.trim() !== "")) return null;
+  return (parsed as string[]).map((p) => p.trim());
+}
+
+// Without a usable rewrite, each option's prompt is the option quoted, an empty line, the question.
+export function fallbackPrompts(options: string[], question: string): string[] {
+  return options.map((o) => `> ${o}\n\n${question}`);
+}
+
+// ---------- quoted prompts ----------
+
+// A prompt that starts with quoted lines ("> ..."), as "Branch with selection" and "Branch per option"
+// make it: the quoted text (without the "> " marks) and the person's own text after it. Only leading
+// quote lines count; everything else is the person's text, exactly as typed.
+export function splitQuote(prompt: string): { quote: string; own: string } {
+  const lines = prompt.split("\n");
+  let end = 0;
+  while (end < lines.length && /^\s*>/.test(lines[end]!)) end++;
+  if (end === 0) return { quote: "", own: prompt };
+  const quote = lines
+    .slice(0, end)
+    .map((line) => line.replace(/^\s*>\s?/, ""))
+    .join("\n")
+    .trim();
+  return { quote, own: lines.slice(end).join("\n").trim() };
+}
+
+// A card's prompt line: the person's own text, or the quoted text when there is nothing else.
+export function promptPreview(prompt: string): string {
+  const { quote, own } = splitQuote(prompt);
+  return own || quote;
 }

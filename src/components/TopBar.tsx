@@ -7,6 +7,7 @@ import {
   selectOpenSaveState,
   setAllCardViews,
   toggleSidebar,
+  selectModels,
   useStore,
   type SaveState,
 } from "../store";
@@ -243,7 +244,8 @@ function SaveState({ save, dot }: { save: SaveState; dot: boolean }) {
 // model is live or the mode is not known yet.
 function useMode(): ServerMode | null {
   const health = useStore((s) => s.health);
-  const mode = serverMode(health);
+  const models = useStore(selectModels);
+  const mode = serverMode(health, models);
   return mode.tag === "" ? null : mode;
 }
 

@@ -7,6 +7,7 @@ import {
   reloadList,
   selectIsLive,
   selectOpenConversation,
+  selectModels,
   useStore,
 } from "../store";
 import { relativeTime } from "../text";
@@ -152,7 +153,7 @@ function ConversationList({ onAskDelete }: { onAskDelete: (id: string, title: st
         <ListedRow key={c.id} summary={c} active={c.id === openId} now={now} onAskDelete={onAskDelete} />
       ))}
       {listState.kind === "ready" && list.length === 0 && unsavedTitle === null && (
-        <p className="px-4 py-3 text-[13px] text-faint">Nothing saved yet.</p>
+        <p className="px-4 py-3 text-[13px] text-muted">Nothing saved yet.</p>
       )}
     </nav>
   );
@@ -263,7 +264,8 @@ const Row = memo(function Row({
 
 function ModelTag() {
   const health = useStore((s) => s.health);
-  const mode = serverMode(health);
+  const models = useStore(selectModels);
+  const mode = serverMode(health, models);
   return (
     <div className="flex h-10 shrink-0 items-center border-t border-line px-4">
       <Tip content={mode.tip}>

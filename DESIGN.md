@@ -109,7 +109,7 @@ Use it on exactly three things: the selected card on the canvas, the empty-state
 - Syntax colors: a restrained theme. Keywords `#ff9d5c` (soft orange), strings `#b9d7a8`, comments `panel-muted`, numbers and literals `#e9c98a`, everything else `panel-fg`.
 - Inline code: mono 0.9em, background surface, radius 4, padding 1px 5px.
 - Headings inside answers: weight 500, tight tracking, sizes 20 / 17 / 15. Lists with comfortable spacing. Links underlined with `line` color, underline turns accent on hover.
-- Tables: hairline cells (`line-soft`), header row in mono small label style, horizontal scroll if too wide.
+- Tables: hairline cells (`line-soft`), header row in mono small label style. A table always fits the width of its column when it can: cells wrap their text, numbers and short values do not break, and no column is wider than it needs. Only when the columns cannot fit at 96px each does the table scroll horizontally inside its own box, and then a faint fade at the right edge shows there is more.
 - Blockquotes: 2px fg left bar, muted text.
 
 ## 5. Layout
@@ -122,14 +122,15 @@ Full window, no page scroll. Three columns separated by 1px `line` hairlines. Al
 │ 248px        ├───────────────────────────────────────────┤ THREAD   OUTPUT 3    │
 │              │                                           ├──────────────────────┤
 │              │ Canvas                                    │ Panel body           │
-│              │                                           │ 480px, resizable     │
-│              │                                           │ 380 to 720           │
+│              │                                           │ 560px, resizable     │
+│              │                                           │ 380 to 60% of window │
 │              │                                           ├──────────────────────┤
 │              │                                           │ Composer             │
 └──────────────┴───────────────────────────────────────────┴──────────────────────┘
 ```
 
 - The sidebar can be collapsed with a button in the top bar (it slides out, 250ms). The state is remembered.
+- Reading mode: a ghost icon button at the right end of the tab strip switches the panel between its normal width and a wide reading width (60% of the window, at most 960px), with a 300ms expo transition. The choice is remembered. In reading mode the text column inside the panel is at most 760px wide and centered, so lines stay a comfortable length.
 - The right panel is resized by dragging its left edge (a 6px invisible grab zone; the hairline turns fg on hover and while dragging). The width is remembered.
 - Minimum supported window: 1100 by 640. Below 1100 wide the sidebar starts collapsed.
 
@@ -244,10 +245,11 @@ Selecting a thread shows its latest turn: if that turn fits in the body, the bod
 4. **Turns**. Each turn:
    - A label row: the turn index and `YOU` as a mono small label.
    - The prompt (prompt-in-panel style).
-   - A label row: `LUNA` as a mono small label, and when live an accent pulse dot with `THINKING` or `WRITING`, and a small secondary Stop button on the right.
+   - A label row: the model name as a mono small label, and when live an accent pulse dot with `THINKING` or `WRITING`, and a small secondary Stop button on the right. For a finished answer the right side of this row holds two icon buttons, Add to output and Branch. The row sticks to the top of the scrolling body while its answer is in view (background bg, bottom hairline `line-soft` only while stuck), so these two actions are always reachable while reading a long answer.
    - The answer as markdown (reading body).
    - An action row under the answer: ghost buttons with text, mono small label style: `ADD TO OUTPUT` (becomes the "in output" tag `IN OUTPUT` with a check icon when clipped; click removes), `BRANCH`, `SPLIT OFF` (not on the first turn), `COPY`. The row is faint at rest and fg on hover of the turn. On the last turn it is always fg.
    - If the turn has excerpt clips: a tag `2 EXCERPTS IN OUTPUT`.
+   - Branch per option: when the answer has options, a block under the answer and above the action row: the label `BRANCH PER OPTION`, then one row per option as a ghost row button (corner arrow, the option number as a mono number, the option title, truncated to one line), and a small secondary button `Branch all` at the end of the label row. An option that already has a branch shows that branch's path number and links to it.
    - If branches leave from this turn: a list of links under the action row, one per branch: a small corner arrow, the path number as a mono number, and the branch title. Click selects that branch.
    - 28px of space and a `line-soft` hairline between turns.
    - Failed turn: a box with a 1px fail border: label `FAILED`, the message, and two small buttons: Retry (secondary) and Remove (ghost).
@@ -260,8 +262,20 @@ Selecting a thread shows its latest turn: if that turn fits in the body, the bod
 - A textarea with no border of its own inside a box with a 1px `line` border, radius 6; the box border turns fg when focused (no outline ring inside). Text 15px. Grows with the content up to 40% of the panel height, then scrolls. Placeholder in faint: "Continue this thread..." or, for a new branch, "First prompt of this branch...".
 - Under the box, one row: on the left, when the panel is at least about 560px wide, a mono small label `SHIFT+ENTER NEW LINE`; on the right the secondary button "Branch off" with the key hint `CTRL+ENTER` inside it and the primary button "Continue" with the key hint `ENTER` inside it.
 - The row must never wrap or cut text at any panel width from 380 to 720. At narrow widths the left label is dropped first.
+- Ask each: when the last answer has options, a third button sits left of "Branch off": secondary, labelled `Ask each` with the option count as a mono number and the key hint `CTRL+SHIFT+ENTER`. It needs text. Its tooltip lists the option titles it will split across. While the rewrite request runs, the box is disabled and the left label reads `SPLITTING ACROSS 2 OPTIONS` with the accent pulse dot. When the typed text refers to each option, Ask each takes the primary look and Continue the secondary look.
+- With three buttons the row must still never wrap: as the panel narrows, the key hints inside the buttons are dropped first (Ask each, then Branch off, then Continue), then the model picker shrinks to its minimum; at 380 all three buttons and the picker fit on one row.
+- "Branch off" is enabled even when the box is empty (it then creates an empty branch). "Continue" needs text; when the box is empty its tooltip says "Type a message first".
 - For an empty thread there is one primary button, "Send".
 - When the thread is busy, the box is disabled and its placeholder says "Waiting for the answer..." (the left label says `WAITING FOR THE ANSWER` when there is room). When the last turn failed, it says `RETRY OR REMOVE THE FAILED TURN FIRST`.
+
+### Model picker
+
+- Shown in the composer row, on the left, in place of the `SHIFT+ENTER NEW LINE` label, and in the start box's bottom row. Hidden when only one model is available.
+- A ghost button: the model name as a mono small label in fg, with a small chevron. It opens a menu (Radix dropdown): models grouped under a mono small label per provider, the current one marked with a check, each row the model name in mono 12px. Menu box: background bg, 1px line border, radius 6, no shadow, max height 320 with its own scroll.
+- The row must never wrap at any panel width from 380 to 720: a long model name truncates with an ellipsis inside the button (max width about 40% of the row).
+- On a turn, the answer's label row shows the model name where it used to say `LUNA` (mono small label, uppercase). Turns saved before models were recorded show `ASSISTANT`.
+- The Output tab's Combine section shows the same picker next to the Combine button.
+- The sidebar's bottom tag shows the model name when one model is available, or the count (`3 MODELS`) with the list in its tooltip.
 
 ### Output tab
 
@@ -296,3 +310,58 @@ Selecting a thread shows its latest turn: if that turn fits in the body, the bod
 7. The canvas never shows overlapping cards or an edge running through a card.
 8. Long content is handled: a 300-character title, a prompt with no spaces, a 500-line answer, a wide table, a wide code block, 40 cards.
 9. The browser console is clean: no errors, no warnings from React, no failed requests.
+
+## 10. Clarity rules
+
+These rules come from the owner using the app for real work.
+Where they conflict with an earlier section, these rules win.
+The look stays the same (light, hairlines, one accent). What changes is that the app must be easy to use, not only good to look at.
+
+### What mono uppercase is for
+
+- Mono uppercase is for metadata only: who spoke (`YOU`, the model name), counts, path numbers, breadcrumbs, statuses, key hints.
+- Anything a person clicks is sentence case, in the sans font, at 13px or larger, with a hit area at least 30px tall.
+- The `faint` color is for decoration only. Text that informs or instructs uses `muted` or `fg`. Nothing clickable is ever `faint`, at rest or otherwise.
+- Label sizes go up: label 11.5px, small label 11px.
+
+### Names
+
+| Old name | New name | Tooltip |
+|---|---|---|
+| Continue | Send | Adds your message to this card. |
+| Branch off | New branch | Starts a new card from here. This card stays as it is. |
+| Ask each | Ask each | Asks this question about every option, each in its own card. |
+| Fold / Open | Collapse card / Expand card | Shows only the title of this card on the map. |
+| Hide branches / Show branches | Hide branches / Show branches | Hides every card that comes from this one. |
+| Merge into parent | Merge into parent | Puts these messages back into the card they came from. |
+| Split off | Move to a new branch | Moves this message and the ones after it into their own card. |
+
+### Composer
+
+- One box, then one row: the model picker on the left; on the right `Ask each` (only when the last answer has options), `New branch`, `Send`.
+- `Send` is the primary button. Empty box: `Send` is disabled and looks calmly inactive (surface background, muted text, no opacity trick), and `New branch` stays active.
+- No button is ever drawn at reduced opacity. Disabled means: surface background, muted text, a `not-allowed` cursor, and a tooltip that gives the reason.
+
+### Actions on a turn
+
+- Under each finished answer: a row of real buttons, each an icon plus a sentence-case label at 13px, 30px tall, color `muted`, `fg` on hover: `Add to output` (becomes `In output` with a check and the accent-soft background), `Branch`, `Copy`, and a `...` menu that holds `Move to a new branch`. Always fully visible. No fading by hover.
+- The sticky label row at the top of the answer keeps its two icon buttons.
+
+### Thread header
+
+- Row 1: the breadcrumb.
+- Row 2: the title (click to rename) and, at the right, one `...` menu button. The menu (Radix dropdown, same styling as the model picker menu) lists: Rename, Collapse card, Hide branches, Merge into parent, Delete branch. Each item has a second line in `muted` 12.5px that explains it in one plain sentence. Items that cannot be used are shown disabled with the reason as that second line.
+- For a branch (not the root): under the title, one small secondary button `Another branch from the same message`. It creates an empty sibling branch from the same turn and focuses its composer.
+- The old row of four buttons is removed.
+
+### Reading
+
+- The conversation is the main column. The right panel's default width is half of the area to the right of the sidebar, never less than 560 and never more than 820. The person can still resize it from 380 up to 70% of the window, and reading mode jumps to that 70%.
+- Reading sizes: answer text 16px with line height 1.65; the prompt 16px weight 500; headings inside answers 22, 19 and 17px; code 13px.
+- When a conversation opens, the canvas shows the root card at zoom 0.8 (the canvas is the map; the panel is for reading).
+
+### First-use tip
+
+Under the first finished answer of the first conversation a person ever starts: a small box (surface background, radius 6, no border) with three short lines and a `Got it` button:
+"Send adds your message to this card. New branch starts a new card from here, so you can follow a side question without losing your place. Select any text in an answer to branch from it or save it to the final output."
+Dismissing it is remembered in the browser and it never shows again.

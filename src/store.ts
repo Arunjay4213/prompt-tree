@@ -4,9 +4,9 @@
 // conversation keeps streaming and saving while another one is open.
 
 import { create } from "zustand";
-import type { ChatMessage, Conversation, ConversationSummary, Health, StreamEvent, Thread } from "../shared/api";
+import type { ChatMessage, Conversation, ConversationSummary, Health, ModelInfo, StreamEvent, Thread } from "../shared/api";
 import * as api from "./api";
-import { copyText } from "./text";
+import { answerOptions, copyText, fallbackPrompts, parseRewrite, REWRITE_SYSTEM, rewriteMessage } from "./text";
 import * as tree from "./tree";
 
 export type HealthState = { kind: "loading" } | { kind: "ready"; health: Health } | { kind: "unreachable" };
@@ -27,6 +27,14 @@ const SAVED: SaveState = { kind: "saved" };
 const SAVING: SaveState = { kind: "saving" };
 const FAILED: SaveState = { kind: "failed" };
 export type PanelTab = "thread" | "output";
+// none:   the server offers no model (health not loaded yet, no provider set up, or unreachable).
+// chosen: the model the next message, retry fallback and Combine use.
+export type ModelChoice = { kind: "none" } | { kind: "chosen"; id: string };
+// "Ask each" on a thread while its rewrite request runs: where the branches will go, and for which options.
+export type SplitState = { kind: "splitting"; conversationId: string; turnId: string; options: string[] };
+// The first-use tip: dismissed for good, or waiting under the first answer of the first conversation
+// this browser started (conversationId null until that conversation exists).
+export type FirstUseTip = { kind: "dismissed" } | { kind: "pending"; conversationId: string | null };
 export type SidebarView = "shown" | "collapsed";
 // A request for the canvas to move its view. The tick makes a repeated request a new one.
 // reveal: pan only if the card is off screen. center: center the card. fit: fit the whole visible tree.
@@ -38,8 +46,14 @@ export type ViewRequest =
 export type ToastState = { kind: "hidden"; text: string } | { kind: "shown"; text: string };
 
 export const PANEL_MIN_WIDTH = 380;
-export const PANEL_MAX_WIDTH = 720;
-const PANEL_DEFAULT_WIDTH = 480;
+const PANEL_MAX_SHARE = 0.7; // of the window: the widest the panel goes, and reading mode
+const PANEL_DEFAULT_MIN = 560;
+const PANEL_DEFAULT_MAX = 820;
+const SIDEBAR_WIDTH = 248;
+// default: half of the area right of the sidebar, 560 to 820. set: a width the person dragged to.
+export type PanelSize = { kind: "default" } | { kind: "set"; width: number };
+// normal: the panel at its size. reading: the panel at 70% of the window for reading.
+export type PanelMode = "normal" | "reading";
 const NARROW_WINDOW = 1100;
 const TOAST_MS = 1800;
 
@@ -51,13 +65,18 @@ type State = {
   openId: string | null; // null only before boot has picked a conversation
   openState: OpenState;
   saveStates: Record<string, SaveState>;
+  modelChoice: ModelChoice;
+  splits: Record<string, SplitState>; // by thread id
+  tip: FirstUseTip;
   selectedThreadId: string | null; // a thread of the open conversation
   tab: PanelTab;
   drafts: Record<string, string>; // the composer text of each thread, by thread id (also kept in localStorage)
   composerFocusTick: number;
   viewRequest: ViewRequest | null;
   sidebar: SidebarView;
-  panelWidth: number;
+  panelSize: PanelSize;
+  panelMode: PanelMode;
+  panelWidth: number; // the width the panel has now, from panelSize, panelMode and the window (panelWidthFor)
   toast: ToastState;
 };
 
@@ -65,7 +84,11 @@ type State = {
 
 const PREF_SIDEBAR = "prompt-tree:sidebar";
 const PREF_PANEL_WIDTH = "prompt-tree:panel-width";
+const PREF_PANEL_MODE = "prompt-tree:panel-mode";
+const PREF_TIP = "prompt-tree:tip";
+const PREF_FIRST_CONVERSATION = "prompt-tree:first-conversation";
 const PREF_LAST_CONVERSATION = "prompt-tree:last-conversation";
+const PREF_MODEL = "prompt-tree:model";
 
 function readPref(key: string): string | null {
   try {
@@ -83,8 +106,23 @@ function writePref(key: string, value: string) {
   }
 }
 
-export function clampPanelWidth(width: number): number {
-  return Math.round(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, width)));
+// The widest the panel may be in a window of this width.
+export function panelMaxWidth(windowWidth: number): number {
+  return Math.max(PANEL_MIN_WIDTH, Math.floor(windowWidth * PANEL_MAX_SHARE));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.round(Math.min(max, Math.max(min, value)));
+}
+
+// The panel's width for its size, its mode, the sidebar and the window. A stored width stays valid
+// when the window shrinks: it is clamped here, every time.
+function panelWidthFor(size: PanelSize, mode: PanelMode, sidebar: SidebarView, windowWidth: number): number {
+  const max = panelMaxWidth(windowWidth);
+  if (mode === "reading") return max;
+  if (size.kind === "set") return clamp(size.width, PANEL_MIN_WIDTH, max);
+  const area = windowWidth - (sidebar === "shown" ? SIDEBAR_WIDTH : 0);
+  return clamp(clamp(area / 2, PANEL_DEFAULT_MIN, PANEL_DEFAULT_MAX), PANEL_MIN_WIDTH, max);
 }
 
 function initialSidebar(): SidebarView {
@@ -92,9 +130,13 @@ function initialSidebar(): SidebarView {
   return readPref(PREF_SIDEBAR) === "collapsed" ? "collapsed" : "shown";
 }
 
-function initialPanelWidth(): number {
+function initialPanelSize(): PanelSize {
   const stored = Number(readPref(PREF_PANEL_WIDTH));
-  return Number.isFinite(stored) && stored > 0 ? clampPanelWidth(stored) : PANEL_DEFAULT_WIDTH;
+  return Number.isFinite(stored) && stored > 0 ? { kind: "set", width: stored } : { kind: "default" };
+}
+
+function initialPanelMode(): PanelMode {
+  return readPref(PREF_PANEL_MODE) === "reading" ? "reading" : "normal";
 }
 
 // ---------- the store ----------
@@ -107,13 +149,18 @@ export const useStore = create<State>(() => ({
   openId: null,
   openState: { kind: "idle" },
   saveStates: {},
+  modelChoice: { kind: "none" },
+  splits: {},
+  tip: readPref(PREF_TIP) === "dismissed" ? { kind: "dismissed" } : { kind: "pending", conversationId: readPref(PREF_FIRST_CONVERSATION) },
   selectedThreadId: null,
   tab: "thread",
   drafts: {},
   composerFocusTick: 0,
   viewRequest: null,
   sidebar: initialSidebar(),
-  panelWidth: initialPanelWidth(),
+  panelSize: initialPanelSize(),
+  panelMode: initialPanelMode(),
+  panelWidth: panelWidthFor(initialPanelSize(), initialPanelMode(), initialSidebar(), window.innerWidth),
   toast: { kind: "hidden", text: "" },
 }));
 
@@ -124,6 +171,14 @@ const set = useStore.setState;
 
 export function selectOpenConversation(s: State): Conversation | undefined {
   return s.openId === null ? undefined : s.conversations[s.openId];
+}
+
+const NO_MODELS: ModelInfo[] = [];
+
+// The models the server offers (none until health has loaded).
+export function selectModels(s: State): ModelInfo[] {
+  // `?? NO_MODELS`: a server from before model providers sends no list.
+  return s.health.kind === "ready" ? (s.health.health.models ?? NO_MODELS) : NO_MODELS;
 }
 
 export function selectOpenSaveState(s: State): SaveState {
@@ -302,8 +357,9 @@ function saveNow(id: string, keepalive = false) {
 type StreamTarget =
   | { kind: "turn"; conversationId: string; turnId: string }
   | { kind: "output"; conversationId: string }
-  | { kind: "title"; conversationId: string; threadId: string };
-type ShownTarget = Exclude<StreamTarget, { kind: "title" }>;
+  | { kind: "title"; conversationId: string; threadId: string }
+  | { kind: "rewrite"; conversationId: string; threadId: string };
+type ShownTarget = Exclude<StreamTarget, { kind: "title" } | { kind: "rewrite" }>;
 type StreamEnd =
   | { kind: "complete" }
   | { kind: "truncated" }
@@ -311,7 +367,7 @@ type StreamEnd =
   | { kind: "stopped" }
   | { kind: "interrupted" }; // the stream ended without a final event
 
-// Key: the turn id, "output:<conversation id>", or "title:<thread id>".
+// Key: the turn id, "output:<conversation id>", "title:<thread id>", or "rewrite:<thread id>".
 const streams = new Map<string, { target: StreamTarget; controller: AbortController }>();
 const pendingText = new Map<string, { target: ShownTarget; text: string }>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -324,6 +380,8 @@ function streamKey(target: StreamTarget): string {
       return `output:${target.conversationId}`;
     case "title":
       return `title:${target.threadId}`;
+    case "rewrite":
+      return `rewrite:${target.threadId}`;
   }
 }
 
@@ -349,18 +407,24 @@ function flushText() {
 }
 
 // `onText` receives each piece of text as it arrives.
+// `request.model` null: no model is available, so nothing is sent and the stream fails at once.
 async function runStream(
   target: StreamTarget,
-  request: { system?: string; messages: ChatMessage[] },
+  request: { system?: string; messages: ChatMessage[]; model: string | null },
   onText: (text: string) => void,
   finish: (end: StreamEnd) => void,
 ) {
+  const model = request.model;
+  if (model === null) {
+    finish({ kind: "failed", reason: NO_MODEL_REASON });
+    return;
+  }
   const controller = new AbortController();
   const key = streamKey(target);
   streams.set(key, { target, controller });
   let end: StreamEnd = { kind: "interrupted" };
   try {
-    await api.streamComplete(request, controller.signal, (event: StreamEvent) => {
+    await api.streamComplete({ ...request, model }, controller.signal, (event: StreamEvent) => {
       if (event.type === "text") onText(event.text);
       else if (event.type === "done") end = event.outcome === "cut_off" ? { kind: "truncated" } : { kind: "complete" };
       else end = { kind: "failed", reason: event.message };
@@ -378,8 +442,9 @@ function startTurnStream(conversationId: string, turnId: string) {
   const conv = get().conversations[conversationId];
   if (!conv) return;
   const messages = tree.buildMessages(conv, turnId);
+  const model = tree.findTurn(conv, turnId)?.turn.model ?? null;
   const target: ShownTarget = { kind: "turn", conversationId, turnId };
-  void runStream(target, { messages }, (text) => queueText(target, text), (end) => {
+  void runStream(target, { messages, model }, (text) => queueText(target, text), (end) => {
     writeConversation(
       conversationId,
       (c) => {
@@ -418,7 +483,9 @@ function requestTitle(conversationId: string, turnId: string) {
   const content = `Prompt:\n${turn.prompt.slice(0, TITLE_INPUT_CHARS)}\n\nAnswer:\n${turn.answer.slice(0, TITLE_INPUT_CHARS)}`;
   let reply = "";
   const target: StreamTarget = { kind: "title", conversationId, threadId: thread.id };
-  void runStream(target, { system: TITLE_SYSTEM, messages: [{ role: "user", content }] }, (text) => (reply += text), (end) => {
+  // The title comes from the model that wrote the answer, or the current choice if it is gone.
+  const model = availableModel(turn.model);
+  void runStream(target, { system: TITLE_SYSTEM, messages: [{ role: "user", content }], model }, (text) => (reply += text), (end) => {
     // The title is a cosmetic extra: if the request fails or is cut off, the prompt title stays and no error is shown.
     if (end.kind !== "complete") return;
     writeConversation(conversationId, (c) => tree.applyModelTitle(c, thread.id, tree.titleFromModel(reply)));
@@ -434,6 +501,38 @@ function abortStreamsOf(conversationId: string) {
   }
 }
 
+// ---------- the model choice ----------
+
+const NO_MODEL_REASON = "No model is available. Set a provider key in .env (see .env.example) and restart the server.";
+
+// The stored choice when the server still offers it, otherwise the server's default. Runs when
+// health arrives, so a model that disappeared from the server is never used.
+function settleModelChoice() {
+  const models = selectModels(get());
+  const stored = readPref(PREF_MODEL);
+  const health = get().health;
+  const fallback = health.kind === "ready" ? health.health.defaultModel : null;
+  const id = models.some((m) => m.id === stored) ? stored : fallback !== null && models.some((m) => m.id === fallback) ? fallback : (models[0]?.id ?? null);
+  set({ modelChoice: id === null ? { kind: "none" } : { kind: "chosen", id } });
+}
+
+export function chooseModel(id: string) {
+  if (!selectModels(get()).some((m) => m.id === id)) return;
+  set({ modelChoice: { kind: "chosen", id } });
+  writePref(PREF_MODEL, id);
+}
+
+// The model id the next request uses, or null when none is available.
+function chosenModel(): string | null {
+  const choice = get().modelChoice;
+  return choice.kind === "chosen" ? choice.id : null;
+}
+
+// `preferred` when the server offers it, otherwise the current choice.
+function availableModel(preferred: string | null): string | null {
+  return preferred !== null && selectModels(get()).some((m) => m.id === preferred) ? preferred : chosenModel();
+}
+
 // ---------- boot and the conversation list ----------
 
 // Runs once; React's StrictMode calls effects twice in development.
@@ -444,7 +543,10 @@ export async function boot() {
   booted = true;
   void api
     .getHealth()
-    .then((health) => set({ health: { kind: "ready", health } }))
+    .then((health) => {
+      set({ health: { kind: "ready", health } });
+      settleModelChoice();
+    })
     .catch(() => set({ health: { kind: "unreachable" } }));
   await reloadList();
   const lastId = readPref(PREF_LAST_CONVERSATION);
@@ -527,6 +629,10 @@ export async function openConversation(id: string) {
     const conversation = tree.recoverConversation(result.conversation);
     set((s) => ({ conversations: { ...s.conversations, [id]: conversation } }));
     restoreDrafts(conversation);
+    // Empty branches that hold no draft are dropped (also not saved); those with a draft stay.
+    const withDrafts = new Set(Object.entries(get().drafts).filter(([, text]) => text.trim() !== "").map(([threadId]) => threadId));
+    const kept = tree.discardEmptyBranches(conversation, withDrafts);
+    if (kept !== conversation) set((s) => ({ conversations: { ...s.conversations, [id]: kept } }));
     if (stillLoading()) showConversation(id);
   } catch (err) {
     if (stillLoading()) {
@@ -681,17 +787,34 @@ export function renameConversation(title: string) {
 export function setSidebar(sidebar: SidebarView) {
   set({ sidebar });
   writePref(PREF_SIDEBAR, sidebar);
+  refreshPanelWidth();
+}
+
+// Recomputes the panel width (after the window, the sidebar, the size or the mode changed).
+export function refreshPanelWidth() {
+  const s = get();
+  const panelWidth = panelWidthFor(s.panelSize, s.panelMode, s.sidebar, window.innerWidth);
+  if (panelWidth !== s.panelWidth) set({ panelWidth });
 }
 
 export function toggleSidebar() {
   setSidebar(get().sidebar === "shown" ? "collapsed" : "shown");
 }
 
+// Dragging the edge: the panel takes that width (and leaves reading mode).
 export function setPanelWidth(width: number) {
-  const panelWidth = clampPanelWidth(width);
-  if (panelWidth === get().panelWidth) return;
-  set({ panelWidth });
-  writePref(PREF_PANEL_WIDTH, String(panelWidth));
+  const next = clamp(width, PANEL_MIN_WIDTH, panelMaxWidth(window.innerWidth));
+  set({ panelSize: { kind: "set", width: next }, panelMode: "normal" });
+  writePref(PREF_PANEL_WIDTH, String(next));
+  writePref(PREF_PANEL_MODE, "normal");
+  refreshPanelWidth();
+}
+
+export function togglePanelMode() {
+  const panelMode: PanelMode = get().panelMode === "reading" ? "normal" : "reading";
+  set({ panelMode });
+  writePref(PREF_PANEL_MODE, panelMode);
+  refreshPanelWidth();
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -714,7 +837,7 @@ export function copyWithToast(text: string) {
 // ---------- selection and view ----------
 
 // Selects a thread of the open conversation (null clears the selection). The previously
-// selected thread is discarded if it is an empty branch.
+// selected thread is discarded if it is an empty branch without a draft.
 export function selectThread(threadId: string | null) {
   // The selected card is always a visible card: hidden branches above it are shown first.
   if (threadId !== null) writeOpen((c) => tree.showBranchesAbove(c, threadId));
@@ -722,7 +845,7 @@ export function selectThread(threadId: string | null) {
   if (selectedThreadId === threadId) return;
   const conv = openConversationNow();
   const previous = conv && selectedThreadId ? tree.findThread(conv, selectedThreadId) : undefined;
-  if (previous && previous.parent !== null && previous.turns.length === 0) {
+  if (previous && previous.parent !== null && previous.turns.length === 0 && (get().drafts[previous.id] ?? "").trim() === "") {
     writeOpen((c) => tree.deleteThread(c, previous.id));
     dropDrafts([previous.id]);
   }
@@ -849,10 +972,15 @@ export function sendFirstPrompt(prompt: string) {
   const conv = openConversationNow();
   if (!conv || !tree.isBlank(conv)) return;
   const rootId = tree.rootThread(conv).id;
-  const result = tree.appendTurn(conv, rootId, prompt, Date.now());
+  const result = tree.appendTurn(conv, rootId, prompt, chosenModel(), Date.now());
   writeConversation(conv.id, () => result.conv, "now");
   setDraft(rootId, "");
   set({ selectedThreadId: rootId, tab: "thread" });
+  const tip = get().tip;
+  if (tip.kind === "pending" && tip.conversationId === null) {
+    set({ tip: { kind: "pending", conversationId: conv.id } });
+    writePref(PREF_FIRST_CONVERSATION, conv.id);
+  }
   writePref(PREF_LAST_CONVERSATION, conv.id);
   startTurnStream(conv.id, result.turnId);
 }
@@ -861,7 +989,7 @@ export function sendFirstPrompt(prompt: string) {
 export function continueHere(threadId: string, prompt: string) {
   const conv = openConversationNow();
   if (!conv) return;
-  const result = tree.appendTurn(conv, threadId, prompt, Date.now());
+  const result = tree.appendTurn(conv, threadId, prompt, chosenModel(), Date.now());
   writeConversation(conv.id, () => result.conv);
   setDraft(threadId, "");
   startTurnStream(conv.id, result.turnId);
@@ -871,7 +999,7 @@ export function continueHere(threadId: string, prompt: string) {
 export function branchOff(threadId: string, prompt: string) {
   const conv = openConversationNow();
   if (!conv) return;
-  const result = tree.branchOffWithPrompt(conv, threadId, prompt, Date.now());
+  const result = tree.branchOffWithPrompt(conv, threadId, prompt, chosenModel(), Date.now());
   writeConversation(conv.id, () => result.conv);
   selectThread(result.threadId);
   setDraft(threadId, "");
@@ -893,6 +1021,136 @@ export function branchFromTurn(threadId: string, turnId: string, draft = "") {
   focusComposer();
 }
 
+// "New branch" with an empty box: an empty branch after the last turn, like Branch on that turn.
+export function branchFromLastTurn(threadId: string) {
+  const last = openConversationNow() && tree.findThread(openConversationNow()!, threadId)?.turns.at(-1);
+  if (last && tree.canBranchFrom(last)) branchFromTurn(threadId, last.id);
+}
+
+// "Another branch from the same message": an empty sibling of this branch, selected, composer focused.
+export function branchFromSameMessage(threadId: string) {
+  const conv = openConversationNow();
+  const result = conv ? tree.createSiblingBranch(conv, threadId, Date.now()) : undefined;
+  if (!conv || !result) return;
+  writeConversation(conv.id, () => result.conv);
+  selectThread(result.threadId);
+  set({ tab: "thread" });
+  requestView(result.threadId, "reveal");
+  focusComposer();
+}
+
+// "Branch per option": a branch after the turn titled with the option, its draft the option quoted.
+function optionDraft(title: string): string {
+  return `> ${title}\n\n`;
+}
+
+export function branchForOption(threadId: string, turnId: string, title: string) {
+  const conv = openConversationNow();
+  if (!conv) return;
+  const result = tree.createBranch(conv, threadId, turnId, Date.now(), title);
+  writeConversation(conv.id, () => result.conv);
+  selectThread(result.threadId);
+  setDraft(result.threadId, optionDraft(title));
+  set({ tab: "thread" });
+  requestView(result.threadId, "reveal");
+  focusComposer();
+}
+
+// "Branch all": a branch for every option that has none yet; the first option's branch is selected.
+export function branchAllOptions(threadId: string, turnId: string, titles: string[]) {
+  const conv = openConversationNow();
+  if (!conv || titles.length === 0) return;
+  let next = conv;
+  const ids: string[] = [];
+  const created: string[] = [];
+  const now = Date.now();
+  titles.forEach((title, i) => {
+    const existing = tree.optionBranch(next, turnId, title);
+    if (existing) {
+      ids.push(existing.id);
+      return;
+    }
+    const result = tree.createBranch(next, threadId, turnId, now + i, title);
+    next = result.conv;
+    ids.push(result.threadId);
+    created.push(result.threadId);
+  });
+  writeConversation(conv.id, () => next);
+  for (const id of created) setDraft(id, optionDraft(tree.findThread(next, id)!.title));
+  selectThread(ids[0]!);
+  set({ tab: "thread" });
+  requestView(ids[0]!, "reveal");
+  focusComposer();
+}
+
+// ---------- "Ask each" ----------
+
+// One question about every option of the thread's last answer: one rewrite request (silent, not a
+// turn), then one branch per option with its own first turn, all started at once.
+export function askEach(threadId: string, question: string) {
+  const conv = openConversationNow();
+  const last = conv ? tree.findThread(conv, threadId)?.turns.at(-1) : undefined;
+  if (!conv || !last || !tree.canBranchFrom(last) || get().splits[threadId]) return;
+  const options = answerOptions(last.answer);
+  if (options.length < 2) return;
+  const model = chosenModel();
+  const split: SplitState = { kind: "splitting", conversationId: conv.id, turnId: last.id, options };
+  set((s) => ({ splits: { ...s.splits, [threadId]: split } }));
+  const health = get().health;
+  if (health.kind !== "ready" || health.health.mode !== "live" || model === null) {
+    // Demo answers cannot rewrite a question (and without a model nothing can): the fallback prompts.
+    finishSplit(threadId, split, fallbackPrompts(options, question), model);
+    return;
+  }
+  let reply = "";
+  const target: StreamTarget = { kind: "rewrite", conversationId: conv.id, threadId };
+  const request = { system: REWRITE_SYSTEM, messages: [{ role: "user" as const, content: rewriteMessage(last.answer, options, question) }], model };
+  void runStream(target, request, (text) => (reply += text), (end) => {
+    // Aborted because the thread or the conversation was deleted: nothing is created.
+    if (end.kind === "stopped") {
+      endSplit(threadId);
+      return;
+    }
+    // A failed or cut-off rewrite, or a reply that is not one prompt per option, is not an error
+    // for the person: the split still happens with the quoted question.
+    const prompts = end.kind === "complete" ? parseRewrite(reply, options.length) : null;
+    finishSplit(threadId, split, prompts ?? fallbackPrompts(options, question), model);
+  });
+}
+
+function endSplit(threadId: string) {
+  set((s) => {
+    const { [threadId]: _done, ...splits } = s.splits;
+    return { splits };
+  });
+}
+
+// The branches go under the thread and turn the split started on, in its conversation, even when
+// another conversation is open by now. If that thread or turn is gone, the result is dropped.
+function finishSplit(threadId: string, split: SplitState, prompts: string[], model: string | null) {
+  endSplit(threadId);
+  const conv = get().conversations[split.conversationId];
+  const thread = conv ? tree.findThread(conv, threadId) : undefined;
+  if (!conv || !thread || !thread.turns.some((t) => t.id === split.turnId)) return;
+  const options = split.options.map((title, i) => ({ title, prompt: prompts[i] ?? title }));
+  const result = tree.createOptionBranches(conv, threadId, split.turnId, options, model, Date.now());
+  writeConversation(conv.id, () => result.conv, "now");
+  set((s) => ({ drafts: { ...s.drafts, [threadId]: "" } }));
+  storeDraftsSoon(conv.id);
+  const first = result.threadIds[0];
+  if (first && get().openId === conv.id) {
+    selectThread(first);
+    set({ tab: "thread" });
+    requestView(first, "reveal");
+  }
+  for (const turnId of result.turnIds) startTurnStream(conv.id, turnId);
+}
+
+export function dismissTip() {
+  set({ tip: { kind: "dismissed" } });
+  writePref(PREF_TIP, "dismissed");
+}
+
 export function stopTurn(turnId: string) {
   streams.get(turnId)?.controller.abort();
 }
@@ -901,7 +1159,9 @@ export function retryTurn(turnId: string) {
   const conv = openConversationNow();
   if (!conv || !tree.retryAllowed(conv, turnId).ok) return;
   const removed = tree.excerptClips(conv, turnId).length;
-  writeConversation(conv.id, (c) => tree.retryTurn(c, turnId));
+  // The turn's own model when the server still offers it, otherwise the current choice.
+  const model = availableModel(tree.findTurn(conv, turnId)?.turn.model ?? null);
+  writeConversation(conv.id, (c) => tree.retryTurn(c, turnId, model));
   if (removed > 0) showToast(`Removed ${removed} ${removed === 1 ? "excerpt" : "excerpts"} from the old answer`);
   startTurnStream(conv.id, turnId);
 }
@@ -973,6 +1233,7 @@ export function deleteThread(threadId: string) {
   for (const t of conv.threads) {
     if (!ids.has(t.id)) continue;
     for (const turn of t.turns) streams.get(turn.id)?.controller.abort();
+    streams.get(`rewrite:${t.id}`)?.controller.abort();
   }
   const selected = get().selectedThreadId;
   if (selected && ids.has(selected)) set({ selectedThreadId: thread.parent.threadId });
@@ -1036,9 +1297,10 @@ export function combine() {
   const open = openConversationNow();
   if (!open || open.clips.length === 0) return;
   const conversationId = open.id;
-  const conv = tree.startOutput(open);
+  const model = chosenModel();
+  const conv = tree.startOutput(open, model);
   writeConversation(conversationId, () => conv);
-  const request = { system: COMBINE_SYSTEM, messages: [{ role: "user" as const, content: combineMessage(conv) }] };
+  const request = { system: COMBINE_SYSTEM, messages: [{ role: "user" as const, content: combineMessage(conv) }], model };
   const target: ShownTarget = { kind: "output", conversationId };
   void runStream(target, request, (text) => queueText(target, text), (end) => {
     writeConversation(

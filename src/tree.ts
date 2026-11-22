@@ -170,11 +170,12 @@ export function canBranchFrom(turn: Turn): boolean {
 // ---------- create ----------
 
 export function emptyOutput(): FinalOutput {
-  return { status: "empty", text: "", instruction: "", error: null };
+  return { status: "empty", text: "", instruction: "", error: null, model: null };
 }
 
-function createTurn(prompt: string, now: number): Turn {
-  return { id: newId(), prompt, answer: "", status: "waiting", error: null, createdAt: now };
+// `model` is the id of the model that will answer (null when no model is available).
+function createTurn(prompt: string, model: string | null, now: number): Turn {
+  return { id: newId(), prompt, answer: "", status: "waiting", error: null, model, createdAt: now };
 }
 
 function createThread(parent: Thread["parent"], title: string, titleSource: TitleSource, turns: Turn[], now: number): Thread {
@@ -198,10 +199,16 @@ export function createConversation(now: number): Conversation {
 // "Continue": append a new turn to the thread.
 // The first prompt of an empty root thread re-titles the thread and the conversation.
 // The first prompt of an untitled branch titles the branch.
-export function appendTurn(conv: Conversation, threadId: string, prompt: string, now: number): { conv: Conversation; turnId: string } {
+export function appendTurn(
+  conv: Conversation,
+  threadId: string,
+  prompt: string,
+  model: string | null,
+  now: number,
+): { conv: Conversation; turnId: string } {
   const thread = findThread(conv, threadId);
   if (!thread) throw new Error("Thread not found");
-  const turn = createTurn(prompt, now);
+  const turn = createTurn(prompt, model, now);
   const emptyRoot = thread.parent === null && thread.turns.length === 0;
   const untitled = thread.turns.length === 0 && thread.title.trim() === "";
   const retitle = emptyRoot || untitled;
@@ -210,10 +217,42 @@ export function appendTurn(conv: Conversation, threadId: string, prompt: string,
   return { conv: emptyRoot ? { ...next, title: titleFromPrompt(prompt), titleSource: "prompt" } : next, turnId: turn.id };
 }
 
-// "Branch": an empty branch card right after the given turn.
-export function createBranch(conv: Conversation, threadId: string, turnId: string, now: number): { conv: Conversation; threadId: string } {
-  const thread = createThread({ threadId, turnId }, "", "prompt", [], now);
+// "Branch": an empty branch card right after the given turn. A given title (an option's) counts as
+// the user's, so it is never replaced automatically.
+export function createBranch(
+  conv: Conversation,
+  threadId: string,
+  turnId: string,
+  now: number,
+  title = "",
+): { conv: Conversation; threadId: string } {
+  const thread = createThread({ threadId, turnId }, title, title === "" ? "prompt" : "user", [], now);
   return { conv: { ...conv, threads: [...conv.threads, thread] }, threadId: thread.id };
+}
+
+// "Another branch from the same message": an empty sibling of a branch, from the same turn.
+export function createSiblingBranch(conv: Conversation, threadId: string, now: number): { conv: Conversation; threadId: string } | undefined {
+  const parent = findThread(conv, threadId)?.parent;
+  return parent ? createBranch(conv, parent.threadId, parent.turnId, now) : undefined;
+}
+
+// "Ask each": one branch per option after the given turn, each titled with its option (a user
+// title) and holding its first turn, answered by `model`. Returns the new thread and turn ids in order.
+export function createOptionBranches(
+  conv: Conversation,
+  threadId: string,
+  turnId: string,
+  options: { title: string; prompt: string }[],
+  model: string | null,
+  now: number,
+): { conv: Conversation; threadIds: string[]; turnIds: string[] } {
+  const threads = options.map((o, i) => createThread({ threadId, turnId }, o.title, "user", [createTurn(o.prompt, model, now + i)], now + i));
+  return { conv: { ...conv, threads: [...conv.threads, ...threads] }, threadIds: threads.map((t) => t.id), turnIds: threads.map((t) => t.turns[0]!.id) };
+}
+
+// The branch of a turn made for an option: a child thread of that turn whose title is the option title.
+export function optionBranch(conv: Conversation, turnId: string, title: string): Thread | undefined {
+  return childrenOfTurn(conv, turnId).find((t) => t.title.trim() === title.trim());
 }
 
 // "Branch off": a new branch after the last turn of the thread, holding the new prompt.
@@ -221,12 +260,13 @@ export function branchOffWithPrompt(
   conv: Conversation,
   threadId: string,
   prompt: string,
+  model: string | null,
   now: number,
 ): { conv: Conversation; threadId: string; turnId: string } {
   const thread = findThread(conv, threadId);
   const last = thread?.turns.at(-1);
   if (!thread || !last) throw new Error("Nothing to branch from");
-  const turn = createTurn(prompt, now);
+  const turn = createTurn(prompt, model, now);
   const branch = createThread({ threadId, turnId: last.id }, titleFromPrompt(prompt), "prompt", [turn], now);
   return { conv: { ...conv, threads: [...conv.threads, branch] }, threadId: branch.id, turnId: turn.id };
 }
@@ -390,10 +430,10 @@ function lastTurnActionAllowed(conv: Conversation, turnId: string, verb: string)
   const found = findTurn(conv, turnId);
   if (!found) return { ok: false, reason: "Turn not found" };
   if (found.turn.status !== "failed" && found.turn.status !== "stopped") {
-    return { ok: false, reason: `Only a failed or stopped turn can be ${verb}` };
+    return { ok: false, reason: `Only a failed or stopped message can be ${verb}` };
   }
-  if (found.index !== found.thread.turns.length - 1) return { ok: false, reason: `Only the last turn of a card can be ${verb}` };
-  if (childrenOfTurn(conv, turnId).length > 0) return { ok: false, reason: `A turn that has branches cannot be ${verb}` };
+  if (found.index !== found.thread.turns.length - 1) return { ok: false, reason: `Only the last message of a card can be ${verb}` };
+  if (childrenOfTurn(conv, turnId).length > 0) return { ok: false, reason: `A message that has branches cannot be ${verb}` };
   return { ok: true };
 }
 
@@ -405,11 +445,11 @@ export function removeAllowed(conv: Conversation, turnId: string): Allowed {
   return lastTurnActionAllowed(conv, turnId, "removed");
 }
 
-// failed | stopped -> waiting (the same prompt runs again). The turn's excerpt clips are removed:
-// their text came from the old answer. A whole-answer clip stays and follows the new answer.
-export function retryTurn(conv: Conversation, turnId: string): Conversation {
+// failed | stopped -> waiting (the same prompt runs again, answered by `model`). The turn's excerpt
+// clips are removed: their text came from the old answer. A whole-answer clip stays and follows the new answer.
+export function retryTurn(conv: Conversation, turnId: string, model: string | null): Conversation {
   if (!retryAllowed(conv, turnId).ok) return conv;
-  const next = updateTurn(conv, turnId, (t) => ({ ...t, status: "waiting", answer: "", error: null }));
+  const next = updateTurn(conv, turnId, (t) => ({ ...t, status: "waiting", answer: "", error: null, model }));
   return { ...next, clips: next.clips.filter((c) => !(c.kind === "excerpt" && c.turnId === turnId)) };
 }
 
@@ -430,9 +470,9 @@ export function outputInFlight(output: FinalOutput): boolean {
   return output.status === "waiting" || output.status === "streaming";
 }
 
-// any -> waiting (a new combine run)
-export function startOutput(conv: Conversation): Conversation {
-  return { ...conv, output: { ...conv.output, status: "waiting", text: "", error: null } };
+// any -> waiting (a new combine run, written by `model`)
+export function startOutput(conv: Conversation, model: string | null): Conversation {
+  return { ...conv, output: { ...conv.output, status: "waiting", text: "", error: null, model } };
 }
 
 // waiting -> streaming, on the first text
@@ -489,11 +529,23 @@ function addMissingTitleSources(conv: Conversation): Conversation {
   };
 }
 
-// No turn may stay waiting or streaming after a reload. Empty branches (made by "Branch"
-// and never used) are dropped as well. Missing title sources are filled in.
+// Turns and outputs saved before models were recorded have no `model`: it is filled in as null
+// (the interface then shows ASSISTANT).
+function addMissingModels(conv: Conversation): Conversation {
+  const missing = (x: { model?: string | null }) => x.model === undefined;
+  if (!missing(conv.output) && !conv.threads.some((t) => t.turns.some(missing))) return conv;
+  return {
+    ...conv,
+    output: missing(conv.output) ? { ...conv.output, model: null } : conv.output,
+    threads: conv.threads.map((t) => (t.turns.some(missing) ? { ...t, turns: t.turns.map((u) => (missing(u) ? { ...u, model: null } : u)) } : t)),
+  };
+}
+
+// No turn may stay waiting or streaming after a reload. Missing title sources and models are
+// filled in. Empty branches stay: the store drops the ones without a draft (discardEmptyBranches).
 // Returns the same object when nothing needed recovering.
 export function recoverConversation(conv: Conversation): Conversation {
-  let next = addMissingTitleSources(conv);
+  let next = addMissingModels(addMissingTitleSources(conv));
   if (next.threads.length === 0) {
     next = { ...next, threads: [createThread(null, next.title, next.titleSource, [], next.createdAt)] };
   }
@@ -502,10 +554,16 @@ export function recoverConversation(conv: Conversation): Conversation {
       if (isInFlight(turn)) next = interruptTurn(next, turn.id);
     }
   }
-  for (const thread of next.threads) {
-    if (thread.parent !== null && thread.turns.length === 0) next = deleteThread(next, thread.id);
-  }
   return interruptOutput(next);
+}
+
+// Drops the empty branches (made by "Branch" and never used) except those in `keep` (they hold a draft).
+export function discardEmptyBranches(conv: Conversation, keep: Set<string>): Conversation {
+  let next = conv;
+  for (const thread of conv.threads) {
+    if (thread.parent !== null && thread.turns.length === 0 && !keep.has(thread.id)) next = deleteThread(next, thread.id);
+  }
+  return next;
 }
 
 // ---------- split and merge ----------
@@ -525,9 +583,9 @@ export function splitAllowed(conv: Conversation, threadId: string, turnId: strin
   const thread = findThread(conv, threadId);
   const index = thread?.turns.findIndex((t) => t.id === turnId) ?? -1;
   if (!thread || index < 0) return { ok: false, reason: "Turn not found" };
-  if (index === 0) return { ok: false, reason: "The first turn of a card cannot be split off" };
+  if (index === 0) return { ok: false, reason: "The first message of a card is where the card starts" };
   const previous = thread.turns[index - 1]!;
-  if (!canBranchFrom(previous)) return { ok: false, reason: "The turn before this one has no answer to branch from" };
+  if (!canBranchFrom(previous)) return { ok: false, reason: "The message before this one has no answer to branch from" };
   return { ok: true };
 }
 
@@ -553,9 +611,9 @@ export function mergeAllowed(conv: Conversation, threadId: string): Allowed {
   const parent = findThread(conv, thread.parent.threadId);
   if (!parent) return { ok: false, reason: "Parent card not found" };
   if (parent.turns.at(-1)?.id !== thread.parent.turnId) {
-    return { ok: false, reason: "Only a branch from the last turn of its parent can merge into it" };
+    return { ok: false, reason: "Only a branch from the last message of its parent can merge into it" };
   }
-  if (thread.turns.length === 0) return { ok: false, reason: "This card has no turns yet" };
+  if (thread.turns.length === 0) return { ok: false, reason: "This card has no messages yet" };
   if (threadInFlight(parent)) return { ok: false, reason: "The parent card has an answer in progress" };
   return { ok: true };
 }

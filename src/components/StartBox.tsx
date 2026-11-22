@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { selectOpenConversation, sendFirstPrompt, setDraft, useStore } from "../store";
+import { ModelPicker } from "./ModelPicker";
 import { Button, Label, LabelSm } from "./ui";
 
 const STEPS = [
@@ -53,11 +54,14 @@ export function StartBox() {
                   send();
                 }
               }}
-              className="scroll-y mt-6 block w-full resize-none bg-transparent text-[15px] leading-[1.5] text-fg outline-none placeholder:text-faint"
+              className="scroll-y mt-6 block w-full resize-none bg-transparent text-[15px] leading-[1.5] text-fg outline-none placeholder:text-muted"
             />
           </div>
           <div className="flex items-center justify-between gap-4 border-t border-line-soft px-6 py-3">
-            <LabelSm>Enter to start · Shift+Enter new line</LabelSm>
+            <div className="flex min-w-0 items-center gap-3">
+              <ModelPicker className="-ml-2 max-w-[260px]" />
+              <LabelSm className="truncate">Enter to start · Shift+Enter new line</LabelSm>
+            </div>
             <Button variant="primary" disabledReason={empty ? "Write a question first" : null} onClick={send}>
               Start
             </Button>

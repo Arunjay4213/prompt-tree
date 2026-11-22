@@ -36,11 +36,11 @@ export const InheritedContext = memo(function InheritedContext({ threadId }: { t
       <button
         type="button"
         aria-expanded={expanded}
-        className="label flex h-10 w-full items-center justify-between gap-4 text-left transition-colors hover:text-fg"
+        className="flex h-10 w-full items-center justify-between gap-4 text-left text-[13.5px] font-medium text-muted transition-colors hover:text-fg"
         onClick={() => setView(expanded ? "collapsed" : "expanded")}
       >
         <span className="truncate">
-          Inherited context · <span className="num">{plural(turns.length, "turn")}</span>
+          Inherited context · {plural(turns.length, "message")}
         </span>
         <ChevronDown {...ICON} className={`shrink-0 transition-transform duration-200 ease-out-expo ${expanded ? "rotate-180" : ""}`} />
       </button>
@@ -48,7 +48,7 @@ export const InheritedContext = memo(function InheritedContext({ threadId }: { t
         <ol className="pb-2">
           {turns.map((turn, i) => (
             <li key={turn.id} className="grid grid-cols-[40px_minmax(0,1fr)] border-t border-line-soft py-3">
-              <span className="label-sm num pt-[2px] text-faint">{numbers[i]}</span>
+              <span className="label-sm num pt-[2px] text-muted">{numbers[i]}</span>
               <div className="min-w-0">
                 <p className="line-clamp-2 text-[13.5px] leading-[1.4] font-medium tracking-[-0.005em] [overflow-wrap:anywhere] text-fg">
                   {turn.prompt}

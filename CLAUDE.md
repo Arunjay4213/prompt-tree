@@ -16,14 +16,15 @@ The quality bar for the interface is https://arunjay.dev/blamingo, and the visua
 - `pnpm typecheck` checks both the web app and the server.
 - `pnpm e2e` drives the running demo app in a real browser through the main flows (`tools/e2e.mjs`). Run `pnpm dev:demo` first.
 - `pnpm build` then `pnpm start` serves the built app from the server alone.
-- The key lives in `.env` as `OPENAI_API_KEY`. Never read, print, or commit `.env`.
-- The model is `gpt-6-luna` (OpenAI Responses API). It is set in one place on the server, overridable with `OPENAI_MODEL`.
+- Keys live in `.env`. Never read, print, or commit `.env`.
+- Models come from providers. A provider is active when its key (or base URL) is set in `.env`; see "Models and providers" below.
 - `PORT` overrides the server port (the Vite proxy follows it).
 
 ## Layout of the code
 
 - `shared/api.ts` is the contract: the conversation data shapes and the HTTP API. Read it first.
-- `server/` is a small Hono server: a stateless streaming proxy to the model plus a JSON file store (`data/conversations/<id>.json`).
+- `server/` is a small Hono server: a stateless streaming proxy to the model providers plus a JSON file store (`data/conversations/<id>.json`, or `data/demo/<id>.json` in demo mode).
+- `server/providers/` has one file per provider. Each exports the same small function shape, so adding a provider is adding one file and one line in the registry.
 - `src/` is the React app (Vite, TypeScript, Tailwind v4, `@xyflow/react` for the canvas, zustand for state, Radix primitives for tooltips and dialogs).
 - `src/tree.ts` holds all tree logic as pure functions over `Conversation`.
 - `src/store.ts` holds the state, the streaming, and the saving.
@@ -71,6 +72,19 @@ Branches are identified by a path number, not a color.
 The root thread is `ROOT`. Its branches are `1`, `2`, `3` in the order they are drawn (by the turn they leave from, then by creation time). A branch of branch 1 is `1.1`, and so on.
 The numbers are computed from the tree, never stored.
 
+### Models and providers
+
+- Providers: `openai` (OpenAI Responses API), `anthropic` (Claude, Messages API), `compatible` (any OpenAI-compatible Chat Completions endpoint, for example OpenRouter, Ollama, LM Studio, Groq, or Gemini's compatible endpoint), `opencode` (a local opencode V2 server the person runs with `opencode serve`), and `demo` (placeholder answers).
+- A model id is `<provider>:<model name>`, for example `openai:gpt-6-luna` or `anthropic:claude-opus-5-5`.
+- `.env` decides what is available: `OPENAI_API_KEY` with optional `OPENAI_MODELS`; `ANTHROPIC_API_KEY` with optional `ANTHROPIC_MODELS`; `COMPATIBLE_BASE_URL` with `COMPATIBLE_MODELS`, optional `COMPATIBLE_API_KEY` and `COMPATIBLE_NAME`. `OPENCODE_URL` and `OPENCODE_PASSWORD` (the opencode server's own password) with optional `OPENCODE_MODELS`; `DEFAULT_MODEL` picks the default.
+- The opencode provider never sees a model login: opencode holds the person's access (a ChatGPT plan, Copilot, API keys, local models) and prompt-tree only talks to its local server. Each request uses a fresh opencode session with every tool denied, sends the branch's history as one transcript prompt, and deletes the session afterwards. opencode's own base instructions still apply.
+- The server reports the available models in `GET /api/health`. Every completion request names its model.
+- The person picks the model in the composer. The choice is remembered in the browser and applies to the next message, so different branches can use different models.
+- Each turn records the model that answered it, and its label is shown on the turn. Retry uses the turn's own model when it is still available, otherwise the current choice.
+- Title requests and Combine use the same model as the turn or the current choice.
+- Demo mode offers two placeholder models so the picker can be tried without a key.
+- Demo mode stores its conversations in a separate folder (`data/demo`), so placeholder and test conversations never mix with real ones in `data/conversations`.
+
 ### Titles
 
 - The conversation's title and the root thread's title are one title. Renaming either changes both.
@@ -93,8 +107,16 @@ The numbers are computed from the tree, never stored.
 
 ### Sending
 
-- The composer has two actions. **Continue** (Enter) adds the turn to the selected card. **Branch off** (Ctrl+Enter) puts the turn in a new branch card after the last turn. Shift+Enter makes a new line.
-- **Branch** on a turn creates an empty branch card after that turn, selects it, and focuses the composer. An empty branch that loses selection is discarded.
+- The composer has two actions. **Send** (Enter) adds the turn to the selected card. **New branch** (Ctrl+Enter) puts the turn in a new branch card after the last turn. Shift+Enter makes a new line. (Older text and code may still say Continue and Branch off; the names in the interface are Send and New branch.)
+- **Another branch from the same message**, on a branch, creates an empty sibling branch from the same turn.
+- **New branch** with an empty box creates an empty branch card after the last turn and focuses its composer, so a person can branch first and type second.
+- **Branch** on a turn creates an empty branch card after that turn, selects it, and focuses the composer. An empty branch that has no draft and loses selection is discarded. An empty branch that has a draft is kept.
+- **Ask each**: when the last answer of the selected thread contains options, the composer offers a third action, "Ask each" (Ctrl+Shift+Enter). It sends one question to every option at once: one branch per option, each titled with its option (a user title), each with the question rewritten to ask about only that option, all streaming in parallel. The first new branch is selected.
+  - The rewrite is one small request to the current model before the branches start: it gets the answer, the option titles, and the question, and returns one prompt per option. It is not a turn and shows nowhere except as a short "splitting" state in the composer.
+  - If the rewrite fails, is cut off, returns the wrong number of prompts, or the server is in demo mode, each branch gets the original question with its option quoted above it. The split always happens.
+  - Enter never splits. When the text contains a word such as "each", "both", "every" or "all the options", the Ask each button is drawn as the primary action as a hint, and Continue as secondary.
+  - An option that already has a branch still gets a new one: the question is new.
+- **Branch per option**: when an answer contains a set of options (two to eight headings of the same level; or else its first top-level list of two to eight items, but only when that list is numbered or every item starts with a bold name; a plain bulleted list of sentences is not a set of options), the options are listed under the answer. Choosing one creates a branch after that turn, titled with the option (a user title, never replaced automatically), whose draft starts with the option quoted. "Branch all" creates one branch per option and selects the first. An option that already has its branch is shown as a link to it instead.
 - Selecting text inside an answer offers "Add to output" (an excerpt clip) and "Branch with selection" (a new branch whose prompt box starts with the selection as a quote).
 - An excerpt keeps its markdown (bold, lists, code blocks with their language) and never includes interface text such as a code block's language label.
 - The same excerpt cannot be added twice. Retrying a turn removes that turn's excerpt clips, because their text came from the old answer.

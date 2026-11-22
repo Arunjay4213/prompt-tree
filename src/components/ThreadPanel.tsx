@@ -144,14 +144,17 @@ function ThreadView({ thread }: { thread: Thread }) {
           }}
         >
           <div ref={contentRef} className="relative px-6">
-            <InheritedContext threadId={thread.id} />
-            {thread.turns.length === 0 ? (
-              <EmptyBranch root={thread.parent === null} />
-            ) : (
-              thread.turns.map((turn, index) => (
-                <TurnView key={turn.id} threadId={thread.id} turn={turn} index={index} isLast={index === thread.turns.length - 1} />
-              ))
-            )}
+            {/* The text column: at most 760px and centered, like the header and the composer. */}
+            <div className="mx-auto max-w-[760px]">
+              <InheritedContext threadId={thread.id} />
+              {thread.turns.length === 0 ? (
+                <EmptyBranch root={thread.parent === null} />
+              ) : (
+                thread.turns.map((turn, index) => (
+                  <TurnView key={turn.id} threadId={thread.id} turn={turn} index={index} isLast={index === thread.turns.length - 1} />
+                ))
+              )}
+            </div>
             <SelectionBar state={bar} threadId={thread.id} onDone={() => setBar({ kind: "none" })} />
           </div>
         </div>
@@ -163,7 +166,7 @@ function ThreadView({ thread }: { thread: Thread }) {
               changeFollow("pinned");
               scrollToEnd();
             }}
-            className="label-sm absolute bottom-3 left-1/2 z-10 flex h-7 -translate-x-1/2 items-center gap-2 rounded-cell border border-line bg-bg px-3 text-fg transition-colors hover:border-fg"
+            className="absolute bottom-3 left-1/2 z-10 flex h-[30px] -translate-x-1/2 items-center gap-2 rounded-cell border border-line bg-bg px-3 text-[13px] font-medium text-fg transition-colors hover:border-fg"
           >
             <ArrowDown {...ICON} />
             Jump to latest
