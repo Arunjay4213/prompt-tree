@@ -2,6 +2,31 @@
   "name": "prompt-tree",
   "private": true,
   "version": "0.1.0",
+  "description": "A local web app for talking to a model in a tree of cards, where each branch sends the model only its own path back to the root.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Arunjay4213/prompt-tree.git"
+  },
+  "homepage": "https://github.com/Arunjay4213/prompt-tree#readme",
+  "bugs": {
+    "url": "https://github.com/Arunjay4213/prompt-tree/issues"
+  },
+  "keywords": [
+    "llm",
+    "chat",
+    "branching",
+    "tree",
+    "conversation",
+    "openai",
+    "anthropic",
+    "ollama",
+    "opencode",
+    "local-first"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,green \"pnpm dev:server\" \"pnpm dev:web\"",

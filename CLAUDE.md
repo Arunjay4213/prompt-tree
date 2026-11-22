@@ -34,6 +34,8 @@ The quality bar for the interface is https://arunjay.dev/blamingo, and the visua
 
 - Simple, robust code. Plain functions. No abstraction with a single caller. No speculative options.
 - No unit-test suites. Verify by running the real app end to end in a browser and looking at it.
+- Checks stay small. A check covers the change that was just made, runs in under two minutes, and is thrown away afterwards. Do not build up private check scripts across rounds and do not re-run everything after every change.
+- The repo keeps exactly one smoke script, `tools/e2e.mjs`: the main path only, about a minute to run. A new feature does not add a flow to it unless it is part of the main path.
 - No implicit state machines. States are named union types (see `TurnStatus`, `CardView`, `OutputStatus`). Every transition is a named function. Never encode a state as a mix of booleans, nulls, or sentinel values.
 - All tree operations (branch, split, merge, delete, context building, numbering, layout) are pure functions in `src/tree.ts`, so they can be read and checked in one place.
 - Colors, fonts, radii and easing come from the tokens in `src/index.css`. No raw hex values in components.
