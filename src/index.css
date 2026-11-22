@@ -1,0 +1,387 @@
+@import "tailwindcss";
+@import "./panel.css";
+@import "./canvas.css";
+
+/* Every color, font, radius and easing used by the app. Components never write a raw hex value. */
+@theme {
+  --color-bg: #fdfcfc;
+  --color-surface: #f1efec;
+  --color-fg: #09090b;
+  --color-muted: #5f5e5a;
+  --color-faint: #8f8d88;
+  --color-line: #c6c4bf;
+  --color-line-soft: #e4e2de;
+  --color-accent: #ff6600;
+  --color-accent-soft: #fff1e6;
+  --color-pass: #1f7a4d;
+  --color-fail: #c2410c;
+
+  --color-panel: #141417;
+  --color-panel-2: #1f1f23;
+  --color-panel-line: #2e2e34;
+  --color-panel-fg: #e9e7e3;
+  --color-panel-muted: #9a9893;
+
+  /* Dialog backdrop: fg at 25% */
+  --color-overlay: rgb(9 9 11 / 0.25);
+
+  /* Syntax colors inside code blocks */
+  --color-code-keyword: #ff9d5c;
+  --color-code-string: #b9d7a8;
+  --color-code-literal: #e9c98a;
+
+  --radius-cell: 6px;
+  --radius-panel: 10px;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+/* ---------- base ----------
+   In the base layer, so utilities such as outline-none on an element win over these defaults. */
+@layer base {
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.3;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-fg);
+  color: var(--color-bg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Thin scrollbars in the line color everywhere */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+}
+
+/* Component classes live in a layer, so a Tailwind utility on the same element wins. */
+@layer components {
+/* A vertically scrolling area that does not shift its content when the scrollbar appears */
+.scroll-y {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* ---------- type ---------- */
+
+/* Mono uppercase label: metadata, counts, statuses */
+.label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+/* The smaller label used inside cards, tags and buttons */
+.label-sm {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+/* Numbers that sit in labels: path numbers, counts, turn indexes */
+.num {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 34px;
+  padding-inline: 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-cell);
+  font-size: 13.5px;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    color 150ms;
+}
+.btn-sm {
+  height: 28px;
+  padding-inline: 10px;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.btn-primary {
+  background: var(--color-fg);
+  color: var(--color-bg);
+  border-color: var(--color-fg);
+}
+.btn-primary:not([aria-disabled="true"]):hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-fg);
+}
+.btn-secondary,
+.btn-danger {
+  background: transparent;
+  color: var(--color-fg);
+  border-color: var(--color-line);
+}
+.btn-secondary:not([aria-disabled="true"]):hover {
+  border-color: var(--color-fg);
+}
+.btn-danger:not([aria-disabled="true"]):hover {
+  border-color: var(--color-fail);
+  color: var(--color-fail);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--color-muted);
+}
+.btn-ghost:not([aria-disabled="true"]):hover {
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+/* The key hint inside a button inherits the button's text color */
+.btn .key-hint {
+  margin-left: auto;
+  color: inherit;
+  opacity: 0.55;
+}
+
+/* 28 by 28 icon-only button */
+.icon-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-cell);
+  color: var(--color-muted);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 150ms,
+    color 150ms;
+}
+.icon-btn:not([aria-disabled="true"]):hover {
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+.icon-btn[data-active="true"] {
+  color: var(--color-fg);
+}
+.icon-btn[data-tone="accent"][data-active="true"] {
+  color: var(--color-accent);
+}
+.icon-btn[data-tone="danger"]:not([aria-disabled="true"]):hover {
+  color: var(--color-fail);
+}
+
+.btn[aria-disabled="true"],
+.icon-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- tag ---------- */
+
+.tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding-inline: 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-cell);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--color-muted);
+}
+.tag-output {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-fg);
+}
+
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+}
+
+/* ---------- corner ticks (from the Blamingo stylesheet) ----------
+   A small L at each corner of a box, just outside it. ::before draws the two top corners,
+   ::after the two bottom ones. Each is a bordered strip clipped to its two ends.
+   The box needs no overflow clipping. */
+.ticks {
+  position: relative;
+  --tick: 7px;
+  --tick-out: 4px;
+  --tick-w: 1.5px;
+}
+.ticks::before,
+.ticks::after {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--tick-out) - var(--tick-w));
+  right: calc(-1 * var(--tick-out) - var(--tick-w));
+  height: var(--tick);
+  border: var(--tick-w) solid var(--color-fg);
+  clip-path: polygon(0 0, var(--tick) 0, var(--tick) 100%, calc(100% - var(--tick)) 100%, calc(100% - var(--tick)) 0, 100% 0, 100% 100%, 0 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+.ticks::before {
+  top: calc(-1 * var(--tick-out) - var(--tick-w));
+  border-bottom: 0;
+}
+.ticks::after {
+  bottom: calc(-1 * var(--tick-out) - var(--tick-w));
+  border-top: 0;
+}
+
+/* ---------- surfaces ---------- */
+
+/* The canvas look: surface with a 24px line grid */
+.grid-surface {
+  background-color: var(--color-surface);
+  background-image:
+    linear-gradient(to right, var(--color-line-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-line-soft) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ---------- motion ---------- */
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+.live-dot {
+  background: var(--color-accent);
+  animation: live-pulse 1.2s var(--ease-out-expo) infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.skeleton {
+  background: var(--color-surface);
+  border-radius: 4px;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.tooltip[data-state="delayed-open"],
+.tooltip[data-state="instant-open"] {
+  animation: rise-in 150ms var(--ease-out-expo);
+}
+.dialog-overlay[data-state="open"] {
+  animation: fade-in 200ms var(--ease-out-expo);
+}
+.dialog-content[data-state="open"] {
+  animation: rise-in 250ms var(--ease-out-expo);
+}
+
+/* The output tab count flashes accent once when a clip is added */
+@keyframes count-flash {
+  0%,
+  60% {
+    color: var(--color-accent);
+  }
+}
+.count-flash {
+  animation: count-flash 600ms ease-out;
+}
+}
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    /* 0s, not 0.01ms: transition-property defaults to all, so any duration would turn every
+       layout change (a height, a border) into a transition and paint one stale frame. */
+    transition-duration: 0s !important;
+  }
+}

@@ -1,0 +1,315 @@
+/* The canvas: grid, cards, ports, edges, controls and minimap. Imported once from index.css.
+   Colors, radii and easing come from the tokens in index.css. */
+
+/* ---------- surface ---------- */
+
+/* The 24px line grid on the surface color. Canvas.tsx sets background-size and -position from
+   the viewport, so the grid pans and zooms with the cards. */
+.pt-grid {
+  background-color: var(--color-surface);
+  background-image:
+    linear-gradient(to right, var(--color-line-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-line-soft) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.react-flow.pt-flow {
+  --xy-background-color: transparent;
+}
+
+.pt-flow .react-flow__panel {
+  margin: 16px;
+}
+
+/* React Flow's attribution stays on (hiding it warns in development), as a quiet mono label
+   8px inside the top-right corner. */
+.pt-flow .react-flow__panel.react-flow__attribution {
+  margin: 8px;
+  padding: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.pt-flow .react-flow__attribution a {
+  color: var(--color-faint);
+  text-decoration: none;
+  transition: color 150ms;
+}
+.pt-flow .react-flow__attribution a:hover {
+  color: var(--color-fg);
+}
+
+/* ---------- scene: edges under cards, in flow coordinates ---------- */
+
+.pt-scene {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.pt-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.pt-edge {
+  fill: none;
+  stroke: var(--color-line);
+  /* 1.5px, but never thinner than 1px on screen when zoomed out (--zoom is set by Canvas.tsx). */
+  stroke-width: max(1.5px, calc(1px / var(--zoom, 1)));
+  transition: stroke 150ms ease;
+}
+.pt-edge[data-on-path="true"] {
+  stroke: var(--color-fg);
+}
+
+/* One positioned card. transform places it; Canvas.tsx glides it frame by frame. */
+.pt-slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 380px;
+  pointer-events: auto;
+}
+.pt-slot[data-phase="measuring"] {
+  visibility: hidden;
+}
+/* The 8px rise of a new card is part of its glide in Canvas.tsx, so its edges follow it. */
+@keyframes pt-card-in {
+  from {
+    opacity: 0;
+  }
+}
+.pt-slot-in {
+  animation: pt-card-in 300ms var(--ease-out-expo) both;
+}
+
+/* A 7px dot centered on the card's right border where a branch leaves. */
+.pt-port {
+  position: absolute;
+  left: 376px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-faint);
+  pointer-events: none;
+  transition: background-color 150ms ease;
+}
+.pt-port[data-on-path="true"] {
+  background: var(--color-fg);
+}
+
+/* ---------- card ---------- */
+
+.pt-card {
+  position: relative;
+  width: 380px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-cell);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: border-color 150ms ease;
+}
+.pt-card[data-kind="empty"] {
+  border-style: dashed;
+}
+.pt-card[data-path-state="normal"]:hover {
+  border-color: var(--color-faint);
+}
+.pt-card[data-path-state="path"] {
+  border-color: var(--color-fg);
+}
+/* 1.5px in total: the 1px border plus half a pixel outside it, so the card keeps its size. */
+.pt-card[data-path-state="selected"] {
+  border-color: var(--color-fg);
+  outline: 0.5px solid var(--color-fg);
+  outline-offset: 0;
+}
+
+.pt-face {
+  transition: opacity 150ms ease;
+}
+
+/* Rounded at the bottom like the card, so a clipped row's accent bar follows the corner. */
+.pt-body {
+  overflow: hidden;
+  border-radius: 0 0 5px 5px;
+}
+
+.pt-row {
+  --row-bg: var(--color-bg);
+  position: relative;
+  display: flex;
+  padding: 10px 12px;
+  background: var(--row-bg);
+  transition: background-color 150ms ease;
+}
+.pt-row + .pt-row {
+  border-top: 1px solid var(--color-line-soft);
+}
+.pt-row:hover {
+  --row-bg: color-mix(in srgb, var(--color-surface) 50%, var(--color-bg));
+}
+
+.pt-preview {
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+/* While streaming: at most four lines, the newest at the bottom. */
+.pt-tail {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: 76px;
+  overflow: hidden;
+}
+
+/* The clip and branch buttons at the right end of the prompt's first line (centered on it: row
+   padding 10 + half a line 9 - half a button 14 = 5). Their place is reserved on the prompt
+   (pr-14), so they never cover text. The branch button shows on hover; a clipped turn's clip
+   toggle always shows. */
+.pt-row-actions {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+}
+.pt-row-action {
+  visibility: hidden;
+  background: var(--row-bg);
+}
+.pt-row:hover .pt-row-action,
+.pt-row:focus-within .pt-row-action,
+.pt-row-action.pt-row-action-pinned {
+  visibility: visible;
+}
+
+.pt-chevron {
+  transition:
+    transform 200ms var(--ease-out-expo),
+    background-color 150ms,
+    color 150ms;
+}
+
+.pt-hidden-tag {
+  cursor: pointer;
+  transition:
+    border-color 150ms,
+    color 150ms;
+}
+.pt-hidden-tag:hover {
+  border-color: var(--color-fg);
+  color: var(--color-fg);
+}
+
+/* THINKING: three dots that pulse one after the other. */
+.pt-thinking {
+  display: inline-flex;
+  gap: 3px;
+}
+.pt-thinking i {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-faint);
+  animation: pt-thinking 1.2s ease-in-out infinite;
+}
+.pt-thinking i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.pt-thinking i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes pt-thinking {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+/* ---------- overview look (zoom below 0.55) ---------- */
+
+.pt-overview {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--color-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+.pt-scene[data-overview="true"] .pt-overview {
+  opacity: 1;
+}
+.pt-scene[data-overview="true"] .pt-face {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- controls and minimap ---------- */
+
+.pt-controls {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-cell);
+}
+.pt-controls .icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 0;
+}
+.pt-controls .icon-btn:first-child {
+  border-radius: 5px 5px 0 0;
+}
+.pt-controls .icon-btn:last-child {
+  border-radius: 0 0 5px 5px;
+}
+.pt-controls .icon-btn + .icon-btn {
+  border-top: 1px solid var(--color-line-soft);
+}
+.pt-controls .icon-btn:focus-visible {
+  outline-offset: -2px;
+}
+
+.pt-minimap {
+  overflow: hidden;
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-cell);
+  cursor: pointer;
+  touch-action: none;
+}
+.pt-minimap svg {
+  display: block;
+}
+.pt-minimap-view {
+  fill: none;
+  stroke: var(--color-fg);
+  stroke-width: 1px;
+}
+.pt-row-action:not([aria-disabled="true"]):hover {
+  background: var(--color-surface);
+}
+/* A selected new branch keeps its dashed border: fg, without the solid half-pixel outline. */
+.pt-card[data-kind="empty"][data-path-state="selected"] {
+  outline: none;
+}
