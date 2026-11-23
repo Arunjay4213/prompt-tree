@@ -1,16 +1,17 @@
 import { ArrowDown } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Thread } from "../../shared/api";
 import { selectOpenConversation, useStore } from "../store";
 import * as tree from "../tree";
 import { Composer } from "./Composer";
-import { InheritedContext } from "./panel/InheritedContext";
+import { EarlierGenerations, GenerationHeader, useGenerations } from "./panel/Generations";
 import { SelectionBar, readAnswerSelection, type BarState } from "./panel/SelectionBar";
 import { ThreadHeader } from "./panel/ThreadHeader";
 import { TurnView } from "./panel/TurnView";
 import { ICON, Label } from "./ui";
 
-// The Thread tab: a fixed header, the scrolling body (inherited context, then the turns), and the composer.
+// The Thread tab: a fixed header, the scrolling body (for a branch the whole conversation it sees,
+// one generation per card on its path; for the root its turns), and the composer.
 export function ThreadPanel() {
   // Only the selected thread: text streaming into other threads never re-renders this panel.
   const thread = useStore((s) => {
@@ -30,7 +31,7 @@ export function ThreadPanel() {
   return <ThreadView key={thread.id} thread={thread} />;
 }
 
-// Space above the YOU label when a tall latest turn is shown from its start.
+// Space above the YOU label when a turn is shown from its start.
 const LANDING_GAP = 16;
 
 // pinned: the body follows the end of the thread as answers grow.
@@ -45,6 +46,12 @@ function ThreadView({ thread }: { thread: Thread }) {
   const lastTop = useRef(0); // scrollTop at the previous scroll event
   const [bar, setBar] = useState<BarState>({ kind: "none" });
   const live = tree.threadInFlight(thread);
+  const generations = useGenerations(thread.id);
+  const ownGeneration = generations.at(-1);
+  // The generation whose section is at the top of the body (the picker's label). Kept in a ref
+  // too, so scroll events set the state only when it changes.
+  const [inView, setInView] = useState(thread.id);
+  const inViewRef = useRef(thread.id);
 
   const changeFollow = (next: Follow) => {
     followRef.current = next;
@@ -56,25 +63,67 @@ function ThreadView({ thread }: { thread: Thread }) {
     el.scrollTop = el.scrollHeight;
     lastTop.current = el.scrollTop;
   };
+  const isAtEnd = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight <= 2;
+  // Sections are children of the content box, which starts at the top of the scrolled area, so
+  // their offsetTop compares directly with scrollTop.
+  const readInView = () => {
+    const scroller = scrollRef.current;
+    const sections = contentRef.current?.querySelectorAll<HTMLElement>("[data-generation]");
+    if (!scroller || !sections || sections.length === 0) return;
+    let id = sections[0]!.dataset.generation ?? "";
+    for (const section of sections) if (section.offsetTop <= scroller.scrollTop + 1) id = section.dataset.generation ?? id;
+    // A last section too short to reach the top would otherwise never be "in view", so the
+    // picker could not show the branch it was just asked for: at the end, or with nothing to
+    // scroll, the last generation counts as the one in view.
+    if (isAtEnd(scroller)) id = sections[sections.length - 1]!.dataset.generation ?? id;
+    if (id !== inViewRef.current) {
+      inViewRef.current = id;
+      setInView(id);
+    }
+  };
+  // Choosing a generation in the picker: its header goes to the top of the body at once. The
+  // follow state ends as a manual scroll would leave it: pinned at the end, free anywhere else.
+  const chooseGeneration = useCallback((id: string) => {
+    const scroller = scrollRef.current;
+    const section = contentRef.current?.querySelector<HTMLElement>(`[data-generation="${id}"]`);
+    if (!scroller || !section) return;
+    scroller.scrollTop = section.offsetTop;
+    lastTop.current = scroller.scrollTop;
+    changeFollow(isAtEnd(scroller) ? "pinned" : "free");
+    readInView();
+  }, []);
 
-  // Opens at the latest turn, before the first paint, without animating through the history:
-  // a latest turn that fits is shown whole (scrolled to the end, following it); a taller one is
-  // shown from its YOU label, a small gap below the top of the body, and the view stays there.
+  // Opens before the first paint, without animating through the history.
+  // With turns of its own: a latest own turn that fits is shown whole (scrolled to the end,
+  // following it); a taller one is shown from its YOU label, a small gap below the top of the
+  // body, and the view stays there.
+  // A branch with no turns yet: the message it branched from (the last earlier turn) is shown
+  // from its YOU label, so the reader sees what the branch is about; when that is already the
+  // end of the body, it follows the end as usual.
   // Then, whenever the content or the body changes size, a pinned body stays at the end.
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
-    const turns = contentRef.current?.querySelectorAll<HTMLElement>(".turn");
-    const latest = turns?.[turns.length - 1];
+    const content = contentRef.current;
+    const own = content?.querySelectorAll<HTMLElement>('.turn[data-role="own"]');
+    const latest = own?.[own.length - 1];
     const label = latest?.querySelector<HTMLElement>("[data-turn-start]");
+    const earlier = content?.querySelectorAll<HTMLElement>('.turn[data-role="earlier"]');
+    const origin = earlier?.[earlier.length - 1]?.querySelector<HTMLElement>("[data-turn-start]");
     if (scroller && latest && label && latest.offsetHeight > scroller.clientHeight) {
       scroller.scrollTop = label.offsetTop - LANDING_GAP;
       lastTop.current = scroller.scrollTop;
       changeFollow("free");
+    } else if (scroller && !latest && origin) {
+      scroller.scrollTop = origin.offsetTop - LANDING_GAP;
+      lastTop.current = scroller.scrollTop;
+      changeFollow(isAtEnd(scroller) ? "pinned" : "free");
     } else {
       scrollToEnd();
     }
+    readInView();
     const observer = new ResizeObserver(() => {
       if (followRef.current === "pinned") scrollToEnd();
+      readInView();
       // Content above a shown selection bar may have moved; place the bar again.
       const content = contentRef.current;
       const scroller = scrollRef.current;
@@ -126,7 +175,7 @@ function ThreadView({ thread }: { thread: Thread }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ThreadHeader threadId={thread.id} />
+      <ThreadHeader threadId={thread.id} generations={generations} inView={inView} onChoose={chooseGeneration} />
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollRef}
@@ -136,26 +185,30 @@ function ThreadView({ thread }: { thread: Thread }) {
             // At the end: pinned. Moved up: the reader left the end, so free. Anything else (the
             // content grew under a pinned view before it was followed) keeps the current state.
             const el = e.currentTarget;
-            const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight <= 2;
+            const atEnd = isAtEnd(el);
             const movedUp = el.scrollTop < lastTop.current - 1;
             lastTop.current = el.scrollTop;
             if (atEnd && followRef.current === "free") changeFollow("pinned");
             else if (movedUp && !atEnd && followRef.current === "pinned") changeFollow("free");
+            readInView();
           }}
         >
           <div ref={contentRef} className="relative px-6">
             {/* The text column: at most 760px and centered, like the header and the composer. */}
             <div className="mx-auto max-w-[760px]">
-              <InheritedContext threadId={thread.id} />
-              {thread.turns.length === 0 ? (
-                <EmptyBranch root={thread.parent === null} />
-              ) : (
-                thread.turns.map((turn, index) => (
-                  <TurnView key={turn.id} threadId={thread.id} turn={turn} index={index} isLast={index === thread.turns.length - 1} />
-                ))
-              )}
+              <EarlierGenerations threadId={thread.id} generations={generations} />
+              <section data-generation={thread.id}>
+                {thread.parent !== null && ownGeneration && <GenerationHeader generation={ownGeneration} kind="current" />}
+                {thread.turns.length === 0 ? (
+                  <EmptyBranch root={thread.parent === null} />
+                ) : (
+                  thread.turns.map((turn, index) => (
+                    <TurnView key={turn.id} role="own" threadId={thread.id} turn={turn} index={index} isLast={index === thread.turns.length - 1} />
+                  ))
+                )}
+              </section>
             </div>
-            <SelectionBar state={bar} threadId={thread.id} onDone={() => setBar({ kind: "none" })} />
+            <SelectionBar state={bar} onDone={() => setBar({ kind: "none" })} />
           </div>
         </div>
         {follow === "free" && live && (
@@ -178,15 +231,19 @@ function ThreadView({ thread }: { thread: Thread }) {
   );
 }
 
+// For a branch the generation header above already names it, so only the note is shown.
 function EmptyBranch({ root }: { root: boolean }) {
+  if (!root) {
+    return (
+      <p className="max-w-[44ch] pt-1 pb-7 text-[13.5px] leading-[1.5] text-pretty text-muted">
+        Write the first prompt of this branch below. It sees the conversation above, and nothing from other branches.
+      </p>
+    );
+  }
   return (
     <div className="py-7">
-      <Label>{root ? "Empty thread" : "New branch"}</Label>
-      <p className="mt-2 max-w-[44ch] text-[13.5px] leading-[1.5] text-pretty text-muted">
-        {root
-          ? "Write the first prompt below."
-          : "Write the first prompt of this branch below. It sees the inherited context above, and nothing from other branches."}
-      </p>
+      <Label>Empty thread</Label>
+      <p className="mt-2 max-w-[44ch] text-[13.5px] leading-[1.5] text-pretty text-muted">Write the first prompt below.</p>
     </div>
   );
 }

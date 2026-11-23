@@ -235,12 +235,26 @@ The active tab is fg with a 1.5px fg underline that sits on the hairline. The in
 
 ### Thread tab
 
-Padding 24px left and right. Three zones: a fixed header (breadcrumb, title, actions) with a bottom hairline, a scrolling body (inherited context, then the turns), and the composer fixed at the bottom.
-Selecting a thread shows its latest turn: if that turn fits in the body, the body is scrolled to the bottom; if it is taller than the body, its first line (the `YOU` label) is placed at the top of the body. The header is always visible.
+Padding 24px left and right.
+Three zones: a fixed header (generation picker, title, actions) with a bottom hairline, a scrolling body (the whole conversation the thread sees), and the composer fixed at the bottom.
+Selecting a thread shows its latest turn: if that turn fits in the body, the body is scrolled to the bottom; if it is taller than the body, its first line (the `YOU` label) is placed a small gap below the top of the body.
+A branch with no turns of its own yet shows the message it branched from, from its `YOU` label, a small gap below the top of the body.
+The header is always visible.
 
-1. **Breadcrumb**: mono small labels, the ancestor path numbers and titles separated by `/`, for example `ROOT / 1 PRICING / 1.2`. Each ancestor is clickable (fg on hover). Truncate titles to about 18 characters.
+1. **Generation picker** (branches only; the root shows its path label `ROOT` here): one ghost button with the path number as a mono small label, the card title (truncated) and a chevron.
+   It names the generation whose section is at the top of the body and changes as the body scrolls.
+   When the body is scrolled to its end, or does not scroll at all, it names the branch itself.
+   It opens a menu (Radix dropdown, same styling as the model picker menu) with one row per generation, root first: path number, title, `This branch` on the last row, and the message count.
+   The generation in view is checked.
+   Choosing a row puts that generation's header at the top of the body at once.
 2. **Title**: panel title style. Click to edit in place. Below it a row of small secondary buttons with icons and text: Fold (or Open), Hide branches (or Show branches), Merge into parent, and Delete (destructive) pushed to the right. Disabled ones explain why in a tooltip.
-3. **Inherited context**: a collapsed row with a top and bottom `line-soft` hairline: mono label `INHERITED CONTEXT · 3 TURNS` and a chevron. Expanded, it lists the ancestor turns in a condensed, muted form (prompt in fg 13.5px, answer clamped to 3 lines in muted, each with its thread path number). Hidden for the root thread.
+3. **Generations** (branches only): the body shows the whole conversation the branch sees, as one continuous scroll.
+   A generation is one card on the path: the root first, then each ancestor, then the branch itself.
+   Each ancestor generation shows the messages it passes on as model context, in full, with the same prompt, label row and markdown answer as the branch's own turns, never clamped or dimmed.
+   Every generation starts with a 48px header row: the path number as a mono small label, the card title (13.5px, weight 500, truncated), the message count in muted, and at the right a text button `Open card` that selects that card.
+   The branch's own header says `This branch` after the title and has no button.
+   A `line-soft` hairline separates generations.
+   On an earlier message the only actions are Add to output (on the label row and under the answer), Copy, and Add to output on a text selection; each clip belongs to the card that owns the message.
 4. **Turns**. Each turn:
    - A label row: the turn index and `YOU` as a mono small label.
    - The prompt (prompt-in-panel style).
@@ -252,7 +266,10 @@ Selecting a thread shows its latest turn: if that turn fits in the body, the bod
    - If branches leave from this turn: a list of links under the action row, one per branch: a small corner arrow, the path number as a mono number, and the branch title. Click selects that branch.
    - 28px of space and a `line-soft` hairline between turns.
    - Failed turn: a box with a 1px fail border: label `FAILED`, the message, and two small buttons: Retry (secondary) and Remove (ghost).
-5. **Selection bar**: when the user selects text inside an answer, a small bar appears just above the selection: background fg, radius 6, two text buttons in bg color separated by a hairline: `ADD TO OUTPUT` and `BRANCH WITH SELECTION`. It disappears when the selection collapses. It must not steal the selection when clicked (use mousedown preventDefault).
+5. **Selection bar**: when the user selects text inside an answer, a small bar appears just above the selection: background fg, radius 6, two text buttons in bg color separated by a hairline: `ADD TO OUTPUT` and `BRANCH WITH SELECTION`.
+   Inside an earlier message it has only `ADD TO OUTPUT`.
+   It disappears when the selection collapses.
+   It must not steal the selection when clicked (use mousedown preventDefault).
 6. **Auto-scroll**: while an answer streams, the body stays pinned to the bottom only if the user was already at the bottom. If they scrolled up, do not move the view; show a small ghost button `JUMP TO LATEST` above the composer.
 
 ### Composer
@@ -317,7 +334,7 @@ The look stays the same (light, hairlines, one accent). What changes is that the
 
 ### What mono uppercase is for
 
-- Mono uppercase is for metadata only: who spoke (`YOU`, the model name), counts, path numbers, breadcrumbs, statuses, key hints.
+- Mono uppercase is for metadata only: who spoke (`YOU`, the model name), counts, path numbers, statuses, key hints.
 - Anything a person clicks is sentence case, in the sans font, at 13px or larger, with a hit area at least 30px tall.
 - The `faint` color is for decoration only. Text that informs or instructs uses `muted` or `fg`. Nothing clickable is ever `faint`, at rest or otherwise.
 - Label sizes go up: label 11.5px, small label 11px.
@@ -347,7 +364,7 @@ The look stays the same (light, hairlines, one accent). What changes is that the
 
 ### Thread header
 
-- Row 1: the breadcrumb.
+- Row 1: for a branch, the generation picker (see section 7); for the root, its path label.
 - Row 2: the title (click to rename) and, at the right, one `...` menu button. The menu (Radix dropdown, same styling as the model picker menu) lists: Rename, Collapse card, Hide branches, Merge into parent, Delete branch. Each item has a second line in `muted` 12.5px that explains it in one plain sentence. Items that cannot be used are shown disabled with the reason as that second line.
 - For a branch (not the root): under the title, one small secondary button `Another branch from the same message`. It creates an empty sibling branch from the same turn and focuses its composer.
 - The old row of four buttons is removed.

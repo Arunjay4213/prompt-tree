@@ -41,8 +41,25 @@ function reason(allowed: tree.Allowed): string | null {
   return allowed.ok ? null : allowed.reason;
 }
 
+// own:     a turn of the open thread, with every action.
+// earlier: a turn the open branch inherited from an ancestor, for reading and collecting only.
+export type TurnRole = "own" | "earlier";
+
 // One turn in the Thread tab: the prompt, the answer, and what can be done with it.
-export const TurnView = memo(function TurnView({ threadId, turn, index, isLast }: { threadId: string; turn: Turn; index: number; isLast: boolean }) {
+// `threadId` is always the thread that owns the turn, also for an earlier turn.
+export const TurnView = memo(function TurnView({
+  role,
+  threadId,
+  turn,
+  index,
+  isLast,
+}: {
+  role: TurnRole;
+  threadId: string;
+  turn: Turn;
+  index: number;
+  isLast: boolean;
+}) {
   const facts = useStore(
     useShallow((s): TurnFacts => {
       const conv = selectOpenConversation(s);
@@ -53,7 +70,7 @@ export const TurnView = memo(function TurnView({ threadId, turn, index, isLast }
         split: reason(tree.splitAllowed(conv, threadId, turn.id)),
         retry: reason(tree.retryAllowed(conv, turn.id)),
         remove: reason(tree.removeAllowed(conv, turn.id)),
-        tip: s.tip.kind === "pending" && s.tip.conversationId === conv.id && tree.rootThread(conv).turns[0]?.id === turn.id,
+        tip: role === "own" && s.tip.kind === "pending" && s.tip.conversationId === conv.id && tree.rootThread(conv).turns[0]?.id === turn.id,
       };
     }),
   );
@@ -77,13 +94,13 @@ export const TurnView = memo(function TurnView({ threadId, turn, index, isLast }
   const hasAnswer = turn.answer.trim() !== "";
   const finished = !inFlight && tree.canBranchFrom(turn);
   // Parsed once per answer text (memoized), and never while the answer streams.
-  const options = finished ? answerOptions(turn.answer) : NONE;
+  const options = finished && role === "own" ? answerOptions(turn.answer) : NONE;
   const copy = () => copyWithToast(turn.answer);
   const clip = () => toggleAnswerClip(threadId, turn.id);
   const branch = () => branchFromTurn(threadId, turn.id);
 
   return (
-    <section data-testid={`turn-panel-${turn.id}`} data-last={isLast} className="turn border-b border-line-soft py-7 last:border-b-0">
+    <section data-testid={`turn-panel-${turn.id}`} data-last={isLast} data-role={role} className="turn border-b border-line-soft py-7 last:border-b-0">
       <span data-turn-start className="label-sm flex items-center gap-2">
         <span className="num text-fg">{String(index + 1).padStart(2, "0")}</span>
         You
@@ -111,14 +128,14 @@ export const TurnView = memo(function TurnView({ threadId, turn, index, isLast }
             </Button>
           </>
         )}
-        {finished && <RowActions clipped={facts.clipped} onClip={clip} onBranch={branch} />}
+        {finished && <RowActions role={role} clipped={facts.clipped} onClip={clip} onBranch={branch} />}
       </AnswerLabelRow>
 
       <div className="mt-1">
         {turn.status === "waiting" && <WaitingLines />}
         {turn.status === "failed" && <FailedBox message={turn.error} turnId={turn.id} retry={facts.retry} remove={facts.remove} />}
         {hasAnswer && turn.status !== "failed" && (
-          <div data-answer-turn={turn.id}>
+          <div data-answer-turn={turn.id} data-answer-thread={threadId} data-answer-role={role}>
             <Markdown text={answer} />
           </div>
         )}
@@ -155,27 +172,31 @@ export const TurnView = memo(function TurnView({ threadId, turn, index, isLast }
               {facts.clipped ? "In output" : "Add to output"}
             </button>
           </Tip>
-          <ActionButton
-            icon={GitBranch}
-            testId="turn-branch"
-            tip="Starts a new card that continues from this answer."
-            disabledReason={tree.canBranchFrom(turn) ? null : "Branching needs an answer with text"}
-            onClick={branch}
-          >
-            Branch
-          </ActionButton>
+          {role === "own" && (
+            <ActionButton
+              icon={GitBranch}
+              testId="turn-branch"
+              tip="Starts a new card that continues from this answer."
+              disabledReason={tree.canBranchFrom(turn) ? null : "Branching needs an answer with text"}
+              onClick={branch}
+            >
+              Branch
+            </ActionButton>
+          )}
           <ActionButton icon={Copy} testId="turn-copy" tip="Copies this answer as markdown." disabledReason={hasAnswer ? null : "There is no answer to copy"} onClick={copy}>
             Copy
           </ActionButton>
-          <MoreMenu label="More actions" testId="turn-more">
-            <MenuItem
-              label="Move to a new branch"
-              description="Moves this message and the ones after it into their own card."
-              disabledReason={facts.split}
-              testId="turn-split"
-              onSelect={() => splitOff(threadId, turn.id)}
-            />
-          </MoreMenu>
+          {role === "own" && (
+            <MoreMenu label="More actions" testId="turn-more">
+              <MenuItem
+                label="Move to a new branch"
+                description="Moves this message and the ones after it into their own card."
+                disabledReason={facts.split}
+                testId="turn-split"
+                onSelect={() => splitOff(threadId, turn.id)}
+              />
+            </MoreMenu>
+          )}
         </div>
       )}
 
@@ -185,7 +206,7 @@ export const TurnView = memo(function TurnView({ threadId, turn, index, isLast }
         </Tag>
       )}
 
-      {branches.length > 0 && (
+      {role === "own" && branches.length > 0 && (
         <ul className="mt-3" aria-label="Branches from this turn">
           {branches.map((b, i) => (
             <li key={b.id}>
@@ -227,7 +248,8 @@ function Prompt({ text }: { text: string }) {
 
 // The two actions on the sticky label row: words and icons when the panel has room (560px and
 // more), icons with tooltips when it is narrower, so the row never wraps.
-function RowActions({ clipped, onClip, onBranch }: { clipped: boolean; onClip: () => void; onBranch: () => void }) {
+// An earlier turn gets only Add to output.
+function RowActions({ role, clipped, onClip, onBranch }: { role: TurnRole; clipped: boolean; onClip: () => void; onBranch: () => void }) {
   const wide = useStore((s) => s.panelWidth >= 560);
   if (!wide) {
     return (
@@ -240,7 +262,7 @@ function RowActions({ clipped, onClip, onBranch }: { clipped: boolean; onClip: (
           data-testid="turn-clip-icon"
           onClick={onClip}
         />
-        <IconButton icon={GitBranch} label="Branch: a new card that continues from this answer" data-testid="turn-branch-icon" onClick={onBranch} />
+        {role === "own" && <IconButton icon={GitBranch} label="Branch: a new card that continues from this answer" data-testid="turn-branch-icon" onClick={onBranch} />}
       </span>
     );
   }
@@ -252,12 +274,14 @@ function RowActions({ clipped, onClip, onBranch }: { clipped: boolean; onClip: (
           {clipped ? "In output" : "Add to output"}
         </button>
       </Tip>
-      <Tip content="Starts a new card that continues from this answer.">
-        <button type="button" data-testid="turn-branch-icon" onClick={onBranch} className="action-btn action-btn-row">
-          <GitBranch {...ICON} />
-          Branch
-        </button>
-      </Tip>
+      {role === "own" && (
+        <Tip content="Starts a new card that continues from this answer.">
+          <button type="button" data-testid="turn-branch-icon" onClick={onBranch} className="action-btn action-btn-row">
+            <GitBranch {...ICON} />
+            Branch
+          </button>
+        </Tip>
+      )}
     </span>
   );
 }

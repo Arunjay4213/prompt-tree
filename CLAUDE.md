@@ -120,6 +120,8 @@ The numbers are computed from the tree, never stored.
   - An option that already has a branch still gets a new one: the question is new.
 - **Branch per option**: when an answer contains a set of options (two to eight headings of the same level; or else its first top-level list of two to eight items, but only when that list is numbered or every item starts with a bold name; a plain bulleted list of sentences is not a set of options), the options are listed under the answer. Choosing one creates a branch after that turn, titled with the option (a user title, never replaced automatically), whose draft starts with the option quoted. "Branch all" creates one branch per option and selects the first. An option that already has its branch is shown as a link to it instead.
 - Selecting text inside an answer offers "Add to output" (an excerpt clip) and "Branch with selection" (a new branch whose prompt box starts with the selection as a quote).
+- A branch's Thread tab shows the whole conversation it sees, ancestors first, in full.
+  Earlier messages from ancestors can only be read, copied and collected; a clip taken from one belongs to the card that owns that message, not to the open branch.
 - An excerpt keeps its markdown (bold, lists, code blocks with their language) and never includes interface text such as a code block's language label.
 - The same excerpt cannot be added twice. Retrying a turn removes that turn's excerpt clips, because their text came from the old answer.
 - Each thread has its own unsent draft. Text typed for one card never moves to another card. A discarded branch takes its draft with it. Drafts are kept in the browser's local storage, so they survive a reload.

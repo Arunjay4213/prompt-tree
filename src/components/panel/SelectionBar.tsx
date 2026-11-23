@@ -3,13 +3,16 @@ import { addExcerptClip, branchFromTurn, selectOpenConversation, showToast, useS
 import * as tree from "../../tree";
 import { selectionMarkdown } from "./excerptMarkdown";
 import { Tip } from "../ui";
+import type { TurnRole } from "./TurnView";
 
 // none:  no bar.
-// shown: a finished selection inside one answer. `center` and `top` are in the coordinates of the
-//        body content; `placement` is "above" the selection, or "below" it when there is no room above.
+// shown: a finished selection inside one answer. `threadId` is the thread that owns the answer
+//        (an ancestor for an earlier turn), `role` the role of that turn. `center` and `top` are in
+//        the coordinates of the body content; `placement` is "above" the selection, or "below" it
+//        when there is no room above.
 export type BarState =
   | { kind: "none" }
-  | { kind: "shown"; turnId: string; text: string; center: number; top: number; placement: "above" | "below" };
+  | { kind: "shown"; threadId: string; turnId: string; role: TurnRole; text: string; center: number; top: number; placement: "above" | "below" };
 
 const BAR_HEIGHT = 32;
 const GAP = 8;
@@ -54,7 +57,9 @@ export function readAnswerSelection(content: HTMLElement, scroller: HTMLElement)
   const line = roomAbove ? first : last;
   return {
     kind: "shown",
+    threadId: answer.dataset.answerThread ?? "",
     turnId: answer.dataset.answerTurn ?? "",
+    role: answer.dataset.answerRole === "earlier" ? "earlier" : "own",
     text,
     center: (line.left + line.right) / 2 - origin.left,
     top: roomAbove ? first.top - origin.top - GAP : last.bottom - origin.top + GAP,
@@ -63,9 +68,9 @@ export function readAnswerSelection(content: HTMLElement, scroller: HTMLElement)
 }
 
 // The small black bar above a selection inside an answer: add it to the output as an excerpt, or
-// start a branch whose prompt opens with it as a quote. Pressing it never clears the selection
+// start a branch whose prompt opens with it as a quote (not from an earlier turn). Pressing it never clears the selection
 // first (mousedown is prevented), so the selected text is still there when the click lands.
-export function SelectionBar({ state, threadId, onDone }: { state: BarState; threadId: string; onDone: () => void }) {
+export function SelectionBar({ state, onDone }: { state: BarState; onDone: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const turn = useStore((s) => {
     const conv = selectOpenConversation(s);
@@ -106,34 +111,38 @@ export function SelectionBar({ state, threadId, onDone }: { state: BarState; thr
     >
       <button
         type="button"
-        className="rounded-l-cell px-3 text-[13px] font-medium whitespace-nowrap text-bg transition-colors hover:text-accent"
+        className={`${state.role === "own" ? "rounded-l-cell" : "rounded-cell"} px-3 text-[13px] font-medium whitespace-nowrap text-bg transition-colors hover:text-accent`}
         onClick={() => {
-          const added = addExcerptClip(threadId, state.turnId, state.text);
+          const added = addExcerptClip(state.threadId, state.turnId, state.text);
           showToast(added === "added" ? "Added to output" : "Already in output");
           finish();
         }}
       >
         Add to output
       </button>
-      <span aria-hidden className="my-2 w-px bg-muted" />
-      <Tip content={branchReason}>
-        <button
-          type="button"
-          aria-disabled={branchReason !== null || undefined}
-          className="rounded-r-cell px-3 text-[13px] font-medium whitespace-nowrap text-bg transition-colors hover:text-accent aria-disabled:cursor-not-allowed aria-disabled:text-faint aria-disabled:hover:text-faint"
-          onClick={() => {
-            if (branchReason !== null) return;
-            const quote = state.text
-              .split("\n")
-              .map((line) => (line.trim() === "" ? ">" : `> ${line}`))
-              .join("\n");
-            branchFromTurn(threadId, state.turnId, `${quote}\n\n`);
-            finish();
-          }}
-        >
-          Branch with selection
-        </button>
-      </Tip>
+      {state.role === "own" && (
+        <>
+          <span aria-hidden className="my-2 w-px bg-muted" />
+          <Tip content={branchReason}>
+            <button
+              type="button"
+              aria-disabled={branchReason !== null || undefined}
+              className="rounded-r-cell px-3 text-[13px] font-medium whitespace-nowrap text-bg transition-colors hover:text-accent aria-disabled:cursor-not-allowed aria-disabled:text-faint aria-disabled:hover:text-faint"
+              onClick={() => {
+                if (branchReason !== null) return;
+                const quote = state.text
+                  .split("\n")
+                  .map((line) => (line.trim() === "" ? ">" : `> ${line}`))
+                  .join("\n");
+                branchFromTurn(state.threadId, state.turnId, `${quote}\n\n`);
+                finish();
+              }}
+            >
+              Branch with selection
+            </button>
+          </Tip>
+        </>
+      )}
     </div>
   );
 }

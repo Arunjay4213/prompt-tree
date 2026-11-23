@@ -363,6 +363,17 @@ export function inheritedContext(conv: Conversation, threadId: string): { thread
   return inheritedTurns(conv, threadId).filter((x) => canBranchFrom(x.turn));
 }
 
+// What the Thread tab of a thread shows: one generation per thread on its path, root first, each
+// with the turns of it that the thread sees (the inherited context), and the thread's own turns last.
+export function generations(conv: Conversation, threadId: string): { thread: Thread; turns: Turn[] }[] {
+  const path = ancestorPath(conv, threadId);
+  const earlier = inheritedContext(conv, threadId);
+  return path.map((thread, i) => ({
+    thread,
+    turns: i === path.length - 1 ? thread.turns : earlier.filter((x) => x.thread.id === thread.id).map((x) => x.turn),
+  }));
+}
+
 // The messages sent to the model for the given turn: its full context, then its own prompt.
 export function buildMessages(conv: Conversation, turnId: string): ChatMessage[] {
   const found = findTurn(conv, turnId);
