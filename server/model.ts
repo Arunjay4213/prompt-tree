@@ -3,6 +3,7 @@
 // environment. Adding a provider is adding its file in providers/ and one entry in PROVIDERS.
 
 import type { ModelInfo, ServerMode } from "../shared/api";
+import { DEMO } from "./env";
 import { anthropic } from "./providers/anthropic";
 import type { AnswerEnd, OnText, Provider, ProviderRequest } from "./providers/common";
 import { compatible } from "./providers/compatible";
@@ -14,7 +15,7 @@ export type { AnswerEnd } from "./providers/common";
 
 // Order matters: it is the order of the model list and decides the default model.
 // opencode's models come from its local server, so they are loaded (once) before the server starts.
-const PROVIDERS: Provider[] = process.env.DEMO_MODE === "1" ? [demo] : [openai, anthropic, compatible, await loadOpencode()];
+const PROVIDERS: Provider[] = DEMO ? [demo] : [openai, anthropic, compatible, await loadOpencode()];
 
 export const ACTIVE_PROVIDERS = PROVIDERS.filter((provider) => provider.modelNames.length > 0);
 
@@ -28,7 +29,7 @@ export const MODELS: ModelInfo[] = ACTIVE_PROVIDERS.flatMap((provider) =>
 );
 
 export const MODE: ServerMode =
-  process.env.DEMO_MODE === "1" ? "demo" : MODELS.length > 0 ? "live" : "no_key";
+  DEMO ? "demo" : MODELS.length > 0 ? "live" : "no_key";
 
 export const DEFAULT_MODEL: string | null =
   MODELS.find((model) => model.id === process.env.DEFAULT_MODEL)?.id ?? MODELS[0]?.id ?? null;
@@ -66,7 +67,7 @@ export function completeAnswer(
       return Promise.resolve({
         type: "error",
         message:
-          "No model provider is configured. In the .env file set OPENAI_API_KEY, or ANTHROPIC_API_KEY, or COMPATIBLE_BASE_URL with COMPATIBLE_MODELS, then restart the server. Or run `pnpm dev:demo` for placeholder answers.",
+          "No model provider is configured. In the .env file set OPENAI_API_KEY, or ANTHROPIC_API_KEY, or COMPATIBLE_BASE_URL with COMPATIBLE_MODELS, then restart the server. Or run `pnpm dev:demo` to try the app with recorded answers.",
       });
     case "model":
       return route.provider.complete(route.modelName, request, onText, signal);

@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent 
 import { useShallow } from "zustand/react/shallow";
 import type { Thread } from "../../shared/api";
 import { askEach, branchFromLastTurn, branchOff, continueHere, selectModels, selectOpenConversation, setDraft, useStore } from "../store";
-import { answerOptions, refersToEach } from "../text";
+import { answerOptions, offeredOptions, refersToEach } from "../text";
 import * as tree from "../tree";
 import { ModelPicker } from "./ModelPicker";
 import { Button, LiveDot } from "./ui";
@@ -36,9 +36,11 @@ const PICKER_MIN = 56;
 let handledFocusTick = 0;
 
 // What the composer needs from the thread, as plain values, so streamed text does not re-render it.
-type ComposerFacts = { mode: ComposerMode; branchReason: string | null; isBranch: boolean; options: string[] };
+// offered: the last answer's options when its prompt asked for alternatives.
+// detected: its options in any case, offered only when the draft asks about each of them.
+type ComposerFacts = { mode: ComposerMode; branchReason: string | null; isBranch: boolean; offered: string[]; detected: string[] };
 
-const NO_THREAD: ComposerFacts = { mode: "busy", branchReason: "Thread not found", isBranch: false, options: NO_OPTIONS };
+const NO_THREAD: ComposerFacts = { mode: "busy", branchReason: "Thread not found", isBranch: false, offered: NO_OPTIONS, detected: NO_OPTIONS };
 
 function composerFacts(thread: Thread | undefined, splitting: boolean): ComposerFacts {
   if (!thread) return NO_THREAD;
@@ -55,8 +57,10 @@ function composerFacts(thread: Thread | undefined, splitting: boolean): Composer
   const branchable = last !== undefined && tree.canBranchFrom(last);
   const branchReason = BLOCKED_REASON[mode] ?? (branchable ? null : "The last answer has no text to branch from");
   // Options only from a finished answer: the options of a streaming answer are not parsed.
-  const options = mode === "open" && branchable && last ? answerOptions(last.answer) : NO_OPTIONS;
-  return { mode, branchReason, isBranch: thread.parent !== null, options };
+  const finished = mode === "open" && branchable && last !== undefined;
+  const offered = finished ? offeredOptions(last.prompt, last.answer) : NO_OPTIONS;
+  const detected = finished ? answerOptions(last.answer) : NO_OPTIONS;
+  return { mode, branchReason, isBranch: thread.parent !== null, offered, detected };
 }
 
 function placeholder(mode: ComposerMode, isBranch: boolean): string {
@@ -66,8 +70,9 @@ function placeholder(mode: ComposerMode, isBranch: boolean): string {
   return mode === "first" && isBranch ? "First message of this branch..." : "Write a message...";
 }
 
-// How much the button row gives up to stay on one line: 0 everything, 1 no key hint on Ask each,
-// 2 none on New branch either, 3 no key hints at all, 4 also the small button size.
+// How much the button row gives up to stay on one line: 0 everything, 1 no key hint on the secondary
+// of Ask each and Send, 2 none on New branch either, 3 no key hints at all, 4 also the small button size.
+// So the primary action keeps its key hint longest, whether it is Send or Ask each.
 type Squeeze = 0 | 1 | 2 | 3 | 4;
 
 export const Composer = memo(function Composer({ threadId }: { threadId: string }) {
@@ -76,13 +81,14 @@ export const Composer = memo(function Composer({ threadId }: { threadId: string 
   // While "Ask each" runs, its options come from the split (the composer is not "open" then).
   const splitOptions = useStore((s) => s.splits[threadId]?.options ?? NO_OPTIONS);
   const splitting = splitOptions.length > 0;
-  const { mode, branchReason, isBranch, options: openOptions } = useStore(
+  const { mode, branchReason, isBranch, offered, detected } = useStore(
     useShallow((s) => {
       const conv = selectOpenConversation(s);
       return composerFacts(conv && tree.findThread(conv, threadId), splitting);
     }),
   );
-  const options = splitting ? splitOptions : openOptions;
+  // A draft that asks about each option brings up Ask each even when the last prompt did not ask for options.
+  const options = splitting ? splitOptions : offered.length > 0 ? offered : refersToEach(draft) ? detected : NO_OPTIONS;
   const ref = useRef<HTMLTextAreaElement>(null);
   const pickerShown = useStore((s) => selectModels(s).length > 1);
   const blocked = BLOCKED_REASON[mode];
@@ -169,7 +175,7 @@ export const Composer = memo(function Composer({ threadId }: { threadId: string 
     if (!prompt) return;
     if (document.activeElement === ref.current) setRefocus("yes");
     if (action === "each") {
-      if (canAskEach) askEach(threadId, prompt);
+      if (canAskEach) void askEach(threadId, prompt);
     } else if (mode === "first" || action === "send") continueHere(threadId, prompt);
     else if (branchReason === null) branchOff(threadId, prompt);
   };
@@ -184,7 +190,8 @@ export const Composer = memo(function Composer({ threadId }: { threadId: string 
 
   const size = squeeze >= 4 ? "sm" : "md";
   const hint = (step: Squeeze, text: string) => (squeeze >= step ? undefined : text);
-  const askTip = `Asks this question about every option, each in its own card: ${options.join("; ")}`;
+  // The shortcut is in the tooltip too, because a narrow panel drops the key hint.
+  const askTip = `Asks this question about every option, each in its own card (Ctrl+Shift+Enter): ${options.join("; ")}`;
 
   return (
     <div data-testid="composer" className="shrink-0 overflow-hidden border-t border-line px-6 py-4 [scrollbar-gutter:stable]">
@@ -233,7 +240,7 @@ export const Composer = memo(function Composer({ threadId }: { threadId: string 
                   <Button
                     variant={eachFirst ? "primary" : "secondary"}
                     size={size}
-                    keyHint={hint(1, "Ctrl+Shift+Enter")}
+                    keyHint={hint(eachFirst ? 3 : 1, "Ctrl+Shift+Enter")}
                     data-testid="composer-ask-each"
                     tip={askTip}
                     disabledReason={blocked ?? (empty ? "Type a question first" : null)}
@@ -255,7 +262,7 @@ export const Composer = memo(function Composer({ threadId }: { threadId: string 
                 <Button
                   variant={eachFirst ? "secondary" : "primary"}
                   size={size}
-                  keyHint={hint(3, "Enter")}
+                  keyHint={hint(eachFirst ? 1 : 3, "Enter")}
                   data-testid="composer-continue"
                   tip="Adds your message to this card."
                   disabledReason={blocked ?? (empty ? "Type a message first" : null)}

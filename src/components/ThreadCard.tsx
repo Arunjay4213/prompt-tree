@@ -11,7 +11,7 @@ import type { Clip, Thread, Turn } from "../../shared/api";
 import { branchFromTurn, goToThread, selectOpenConversation, toggleAnswerClip, toggleBranchesView, toggleCardView, useStore } from "../store";
 import { plainPreview, plural, promptPreview } from "../text";
 import * as tree from "../tree";
-import { zoomBucket } from "./canvas/geometry";
+import { MIN_ZOOM, zoomBucket } from "./canvas/geometry";
 import { IconButton, LabelSm, LiveDot } from "./ui";
 
 // How a card relates to the selected card. The path back to the root is what the model sees.
@@ -25,6 +25,12 @@ type CardKind = "empty" | "turns";
 const PORT_IN_ROW = 20;
 
 const NO_CLIPS: Clip[] = [];
+
+// The overview look of an open card: padding, label row, gap and a title of two 17px lines, in
+// screen pixels. An open card is never shorter than that at the smallest zoom (plus its border),
+// so every overview card has room for two title lines.
+const OVERVIEW_STACKED_HEIGHT = 8 + 15 + 4 + 2 * 17 + 8;
+const MIN_OPEN_CARD_HEIGHT = Math.ceil(OVERVIEW_STACKED_HEIGHT / MIN_ZOOM) + 2;
 
 type Props = {
   threadId: string;
@@ -92,6 +98,7 @@ export const ThreadCard = memo(function ThreadCard({ threadId, pathState, pathNu
       aria-label={`${pathNumber} ${title}`}
       aria-current={pathState === "selected" || undefined}
       className={`pt-card ${pathState === "selected" ? "ticks" : ""}`}
+      style={kind === "turns" && !folded ? { minHeight: MIN_OPEN_CARD_HEIGHT } : undefined}
       onClick={() => goToThread(threadId)}
     >
       <div className="pt-face">
@@ -105,6 +112,7 @@ export const ThreadCard = memo(function ThreadCard({ threadId, pathState, pathNu
                 threadId={thread.id}
                 turn={turn}
                 index={index}
+                only={thread.turns.length === 1}
                 clipped={clips.some((c) => c.kind === "answer" && c.turnId === turn.id)}
                 excerpts={clips.filter((c) => c.kind === "excerpt" && c.turnId === turn.id).length}
               />
@@ -195,12 +203,14 @@ const TurnRow = memo(function TurnRow({
   threadId,
   turn,
   index,
+  only,
   clipped,
   excerpts,
 }: {
   threadId: string;
   turn: Turn;
   index: number;
+  only: boolean; // the card's only turn
   clipped: boolean;
   excerpts: number;
 }) {
@@ -213,7 +223,7 @@ const TurnRow = memo(function TurnRow({
       <div className="min-w-0 flex-1">
         {/* pr-14 keeps the two row buttons' place free on the prompt's lines, so no text is ever under them. */}
         <p className="line-clamp-2 pr-14 text-[13px] leading-[18px] font-medium text-fg [overflow-wrap:anywhere]">{promptPreview(turn.prompt)}</p>
-        <TurnAnswer turn={turn} excerpts={excerpts} />
+        <TurnAnswer turn={turn} excerpts={excerpts} only={only} />
       </div>
       <RowActions threadId={threadId} turnId={turn.id} clipped={clipped} clipReason={clipReason} branchReason={branchReason} />
     </div>
@@ -279,14 +289,16 @@ function branchDisabledReason(turn: Turn): string | null {
 }
 
 // The answer part of a turn row: a designed look for every turn status.
-function TurnAnswer({ turn, excerpts }: { turn: Turn; excerpts: number }) {
+// The preview shows four lines, or six as the only turn of a card: the card's minimum height
+// (MIN_OPEN_CARD_HEIGHT) has room for them, so the card ends near its text instead of with a blank band.
+function TurnAnswer({ turn, excerpts, only }: { turn: Turn; excerpts: number; only: boolean }) {
   const preview = useMemo(() => (turn.status === "streaming" ? "" : plainPreview(turn.answer)), [turn.answer, turn.status]);
   const excerptTag = excerpts > 0 && (
     <span className="tag tag-output h-5 px-1.5">
       {excerpts} {excerpts === 1 ? "excerpt" : "excerpts"}
     </span>
   );
-  const previewText = preview !== "" && <p className="pt-preview mt-1 line-clamp-4">{preview}</p>;
+  const previewText = preview !== "" && <p className={`pt-preview mt-1 ${only ? "line-clamp-6" : "line-clamp-4"}`}>{preview}</p>;
   switch (turn.status) {
     case "waiting":
       return (
@@ -375,10 +387,9 @@ const OverviewFace = memo(function OverviewFace({
 }) {
   const zoom = useViewportStore((s) => zoomBucket(s.transform[2]));
   const available = innerHeight * zoom; // screen pixels
-  // "stacked": a label row (path number, clips, live dot) above a title of up to three lines.
-  // "inline": one row, for cards too short on screen for that (folded cards, short cards).
-  const look: "stacked" | "inline" = available >= 8 + 15 + 4 + 17 + 8 ? "stacked" : "inline";
-  const lines = Math.min(3, Math.floor((available - 8 - 15 - 4 - 8) / 17));
+  // "stacked": a label row (path number, clips, live dot) above a title of up to two lines.
+  // "inline": one row, for cards too short on screen for that (folded cards and new empty branches).
+  const look: "stacked" | "inline" = available >= OVERVIEW_STACKED_HEIGHT ? "stacked" : "inline";
   const inlineLine = Math.min(17, Math.floor(available));
   // "3 TURNS", or only "3" when the row is too narrow for the path number and the word. A mono
   // character of the 11px label is about 7.1px wide; the row has two 8px gaps around its spacer,
@@ -416,7 +427,7 @@ const OverviewFace = memo(function OverviewFace({
           </div>
           <span
             className="text-[13px] leading-[17px] font-medium tracking-[-0.005em] break-words text-fg"
-            style={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: lines, overflow: "hidden" }}
+            style={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden" }}
           >
             {title}
           </span>

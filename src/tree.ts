@@ -196,7 +196,7 @@ export function createConversation(now: number): Conversation {
   };
 }
 
-// "Continue": append a new turn to the thread.
+// "Send": append a new turn to the thread.
 // The first prompt of an empty root thread re-titles the thread and the conversation.
 // The first prompt of an untitled branch titles the branch.
 export function appendTurn(
@@ -255,7 +255,7 @@ export function optionBranch(conv: Conversation, turnId: string, title: string):
   return childrenOfTurn(conv, turnId).find((t) => t.title.trim() === title.trim());
 }
 
-// "Branch off": a new branch after the last turn of the thread, holding the new prompt.
+// "New branch": a new branch after the last turn of the thread, holding the new prompt.
 export function branchOffWithPrompt(
   conv: Conversation,
   threadId: string,
@@ -456,6 +456,12 @@ export function removeAllowed(conv: Conversation, turnId: string): Allowed {
   return lastTurnActionAllowed(conv, turnId, "removed");
 }
 
+// waiting -> waiting, answered by `model`: a turn created before the server's model list arrived
+// gets its model once the list is there.
+export function setWaitingTurnModel(conv: Conversation, turnId: string, model: string | null): Conversation {
+  return updateTurn(conv, turnId, (t) => (t.status === "waiting" ? { ...t, model } : t));
+}
+
 // failed | stopped -> waiting (the same prompt runs again, answered by `model`). The turn's excerpt
 // clips are removed: their text came from the old answer. A whole-answer clip stays and follows the new answer.
 export function retryTurn(conv: Conversation, turnId: string, model: string | null): Conversation {
@@ -600,7 +606,7 @@ export function splitAllowed(conv: Conversation, threadId: string, turnId: strin
   return { ok: true };
 }
 
-// "Split off from here": this turn and the later turns of the card move into a new branch card
+// "Move to a new branch": this turn and the later turns of the card move into a new branch card
 // that branches from the turn before it. Every turn keeps exactly the same model context.
 export function splitOff(conv: Conversation, threadId: string, turnId: string, now: number): { conv: Conversation; threadId: string } {
   if (!splitAllowed(conv, threadId, turnId).ok) return { conv, threadId };

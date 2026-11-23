@@ -13,6 +13,13 @@ export default defineConfig({
   // React, the canvas library, the markdown and highlighting stack, and the rest.
   build: {
     rolldownOptions: {
+      // react-compiler-runtime starts with "use no memo", which the bundler warns it may drop.
+      // That is harmless for a dependency, so only that warning, and only from node_modules, is hidden.
+      onLog(level, log, handler) {
+        const file = log.id ?? log.loc?.file ?? "";
+        if (log.code === "MODULE_LEVEL_DIRECTIVE" && /[\\/]node_modules[\\/]/.test(file)) return;
+        handler(level, log);
+      },
       output: {
         codeSplitting: {
           groups: [

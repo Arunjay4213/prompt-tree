@@ -1,5 +1,5 @@
 // JSON file store for conversations: <folder>/<id>.json under the project root, where the folder is
-// data/demo in demo mode and data/conversations in every other mode, so placeholder and test
+// data/demo in demo mode and data/conversations in every other mode, so demo and test
 // conversations never mix with real ones. The folder is chosen once at startup from the mode.
 // The server stores each conversation exactly as the web app sent it and never edits it.
 
@@ -7,6 +7,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { ConversationSummary } from "../shared/api";
+import { SAMPLE } from "./demo/sample";
 import { MODE } from "./model";
 
 export const PROJECT_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -34,6 +35,16 @@ export async function listConversations(): Promise<ConversationSummary[]> {
     }
   }
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+// In demo mode, an empty folder gets the recorded sample conversation, so a first visit shows the
+// real product. A visitor who deletes it gets it back only when the folder is empty at a later start.
+export async function seedDemoSample(): Promise<void> {
+  if (MODE !== "demo" || SAMPLE === null) return;
+  await mkdir(CONVERSATIONS_DIR, { recursive: true });
+  if ((await readdir(CONVERSATIONS_DIR)).some((name) => name.endsWith(".json"))) return;
+  const now = Date.now();
+  await writeConversation(SAMPLE.conversation.id, { ...SAMPLE.conversation, createdAt: now, updatedAt: now });
 }
 
 // Returns the raw JSON text, or null when there is no such conversation.

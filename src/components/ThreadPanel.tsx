@@ -96,7 +96,8 @@ function ThreadView({ thread }: { thread: Thread }) {
   // Opens before the first paint, without animating through the history.
   // With turns of its own: a latest own turn that fits is shown whole (scrolled to the end,
   // following it); a taller one is shown from its YOU label, a small gap below the top of the
-  // body, and the view stays there.
+  // body, and the view stays there. When that taller turn is a branch's first own turn, the view
+  // starts at the branch's generation header instead, so it is clear that earlier messages are above.
   // A branch with no turns yet: the message it branched from (the last earlier turn) is shown
   // from its YOU label, so the reader sees what the branch is about; when that is already the
   // end of the body, it follows the end as usual.
@@ -109,8 +110,9 @@ function ThreadView({ thread }: { thread: Thread }) {
     const label = latest?.querySelector<HTMLElement>("[data-turn-start]");
     const earlier = content?.querySelectorAll<HTMLElement>('.turn[data-role="earlier"]');
     const origin = earlier?.[earlier.length - 1]?.querySelector<HTMLElement>("[data-turn-start]");
+    const branchStart = own?.length === 1 ? content?.querySelector<HTMLElement>(`[data-generation="${thread.id}"]`) : null;
     if (scroller && latest && label && latest.offsetHeight > scroller.clientHeight) {
-      scroller.scrollTop = label.offsetTop - LANDING_GAP;
+      scroller.scrollTop = thread.parent !== null && branchStart ? branchStart.offsetTop : label.offsetTop - LANDING_GAP;
       lastTop.current = scroller.scrollTop;
       changeFollow("free");
     } else if (scroller && !latest && origin) {

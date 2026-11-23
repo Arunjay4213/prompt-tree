@@ -226,12 +226,16 @@ h3 {
 }
 
 /* Disabled: calmly inactive, never faded. The tooltip says why. */
-.btn[aria-disabled="true"],
-.icon-btn[aria-disabled="true"] {
+.btn[aria-disabled="true"] {
   background: var(--color-surface);
   border-color: var(--color-surface);
   color: var(--color-muted);
   cursor: not-allowed;
+}
+/* An icon-only button has no fill or border when disabled: a filled square reads as pressed. */
+.icon-btn[aria-disabled="true"] {
+  color: var(--color-line);
+  cursor: default;
 }
 
 /* ---------- tag ---------- */

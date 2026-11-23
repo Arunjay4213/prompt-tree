@@ -90,7 +90,7 @@ function Combine({ output }: { output: FinalOutput }) {
             Stop
           </Button>
         ) : (
-          <Button variant="primary" data-testid="combine-run" onClick={combine}>
+          <Button variant="primary" data-testid="combine-run" onClick={() => void combine()}>
             Combine into one document
           </Button>
         )}

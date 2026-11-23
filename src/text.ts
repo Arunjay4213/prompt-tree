@@ -9,6 +9,8 @@ import { unified } from "unified";
 // removed (headings, list bullets and numbers, quotes, emphasis, inline code ticks, link targets).
 export function plainPreview(markdown: string): string {
   const lines: string[] = [];
+  // Headings that got a colon, so "Monthly cost" and the text under it do not read as one sentence.
+  const colons = new Set<number>();
   let inFence = false;
   for (const raw of markdown.split("\n")) {
     if (/^\s{0,3}(```|~~~)/.test(raw)) {
@@ -28,17 +30,28 @@ export function plainPreview(markdown: string): string {
         .filter((cell) => cell !== "")
         .join(" · ");
     }
+    const heading = /^\s*#{1,6}\s+/.test(line);
     line = line
       .replace(/^\s*#{1,6}\s+/, "") // heading marks
       .replace(/^\s*([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/, ""); // list bullets, numbers, task boxes
+    if (heading && /[^\s.,:;!?]$/.test(line.trimEnd())) {
+      line = `${line.trimEnd()}:`;
+      colons.add(lines.length);
+    }
     lines.push(line);
   }
+  // A heading with no text after it keeps no colon.
+  let last = lines.length - 1;
+  while (last >= 0 && lines[last]!.trim() === "") last--;
+  if (colons.has(last)) lines[last] = lines[last]!.slice(0, -1);
   return lines
     .join(" ")
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // images: their alt text
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // links: their text
     .replace(/`+([^`]*)`+/g, "$1") // inline code ticks
-    .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2") // bold
+    .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "$1") // bold with **
+    // Underscores mark emphasis only at word edges, as in markdown, so window.__x keeps them.
+    .replace(/(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, "$1$2") // bold with __
     .replace(/~~(?=\S)([\s\S]*?\S)~~/g, "$1") // strikethrough
     .replace(/(^|[^\w*])\*(?=\S)([^*]*?\S)\*(?![\w*])/g, "$1$2") // italic with *
     .replace(/(^|[^\w])_(?=\S)([^_]*?\S)_(?!\w)/g, "$1$2") // italic with _
@@ -224,8 +237,14 @@ export function promptPreview(prompt: string): string {
   return own || quote;
 }
 
-// Whether a prompt asked for alternatives (then the options of its answer are shown open).
-// Whole words, any case, from a fixed list.
+// The options an answer offers: its headings or list items count only when the prompt that
+// produced it asked for alternatives. Otherwise they are sections of one answer, not options.
+export function offeredOptions(prompt: string, answer: string): string[] {
+  return askedForAlternatives(prompt) ? answerOptions(answer) : NO_OFFERED_OPTIONS;
+}
+const NO_OFFERED_OPTIONS: string[] = [];
+
+// Whether a prompt asked for alternatives. Whole words, any case, from a fixed list.
 export function askedForAlternatives(prompt: string): boolean {
   return /\b(options?|versions?|alternatives?|choices?|ideas?|approach(es)?|ways?|variants?|plans?|possibilities|candidates)\b/i.test(prompt);
 }

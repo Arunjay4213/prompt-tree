@@ -19,10 +19,11 @@ import { IconButton, Label, LabelSm, Tag, Tip } from "./ui";
 
 // How much the bar shows, from roomiest to tightest. It is chosen from the bar's measured width,
 // because that depends on the sidebar and the panel, not on the window.
-// full:      title, counts, mode tag, save state
+// full:      the whole title, counts, mode tag, save state
 // no-counts: the counts label is dropped
 // short-tag: the mode tag shrinks to its dot and one word (the full text is in its tooltip)
-// save-dot:  the save state shrinks to a colored dot with a tooltip
+// save-dot:  the save state shrinks to a colored dot with a tooltip; from here on the title may be
+//            cut, down to 120px, so the title stays whole as long as the counts and the tag can give way
 // no-tag:    the mode tag is dropped (only when the title would get narrower than 120px)
 // bare:      the save dot is dropped too
 // The sidebar toggle and the three view buttons are always shown.
@@ -72,7 +73,8 @@ export function TopBar() {
     const width = (name: string) => sizer.querySelector<HTMLElement>(`[data-size="${name}"]`)?.offsetWidth ?? 0;
     const need = (f: BarFit) => {
       const level = FITS.indexOf(f);
-      const items = [TOGGLE, TITLE_MIN, SPACER_MIN, right.offsetWidth];
+      const title = showTree && level < 3 ? Math.max(TITLE_MIN, width("title")) : TITLE_MIN;
+      const items = [TOGGLE, title, SPACER_MIN, right.offsetWidth];
       if (showTree && level < 1) items.push(width("counts"));
       if (mode && level < 4) items.push(width(level < 2 ? "tag-full" : "tag-short"));
       if (showTree && level < 3) items.push(width("save"));
@@ -126,6 +128,9 @@ export function TopBar() {
       </div>
       {/* Invisible copies of the parts that can shrink, so their full widths can be measured. */}
       <div ref={sizerRef} aria-hidden className="pointer-events-none invisible absolute top-0 left-0 flex w-0 items-start gap-2 overflow-hidden">
+        <span data-size="title" className="shrink-0 px-2 text-[14px] font-medium tracking-[-0.005em] whitespace-nowrap">
+          {title}
+        </span>
         <span data-size="counts" className="inline-flex shrink-0">
           <Label className="whitespace-nowrap">
             <span className="num">{counts}</span>

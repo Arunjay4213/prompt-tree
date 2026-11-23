@@ -12,7 +12,7 @@ const LABEL = process.env.COMPATIBLE_NAME || "Compatible";
 let client: OpenAI | undefined;
 
 async function complete(modelName: string, request: ProviderRequest, onText: OnText, signal: AbortSignal): Promise<AnswerEnd> {
-  // Local servers need no key, but the SDK requires a value, so a placeholder is sent.
+  // Local servers need no key, but the SDK requires a value, so a dummy value is sent.
   client ??= new OpenAI({ baseURL: BASE_URL, apiKey: process.env.COMPATIBLE_API_KEY || "no-key" });
   const system = request.system === undefined ? [] : [{ role: "system" as const, content: request.system }];
   try {

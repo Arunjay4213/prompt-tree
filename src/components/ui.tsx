@@ -6,22 +6,45 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { LucideIcon } from "lucide-react";
-import { useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from "react";
 import { useStore } from "../store";
 
 // Size and stroke for every lucide icon: <Icon {...ICON} />.
 export const ICON = { size: 15, strokeWidth: 1.5, "aria-hidden": true } as const;
 
+// The last key or pointer press anywhere on the page, so a Tip can tell focus moved by Tab
+// (a keyboard user looking for the tooltip) from focus moved by a script.
+// tab:   the last press was Tab or Shift+Tab.
+// other: any other key, or a pointer press.
+type LastInput = "tab" | "other";
+let lastInput: LastInput = "other";
+
 // Wrap the whole app once; gives every Tip the 400 ms open delay.
+// The content is not hoverable: it closes as soon as the pointer leaves the trigger, so a tooltip
+// drawn over another control never keeps itself open or catches that control's clicks.
 export function TipProvider({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => (lastInput = e.key === "Tab" ? "tab" : "other");
+    const onPointerDown = () => (lastInput = "other");
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, []);
   return (
-    <Tooltip.Provider delayDuration={400} skipDelayDuration={200}>
+    <Tooltip.Provider delayDuration={400} skipDelayDuration={200} disableHoverableContent>
       {children}
     </Tooltip.Provider>
   );
 }
 
 // A tooltip on any element that accepts a ref (buttons, links, focusable spans). No content: no tooltip.
+// It opens on pointer hover, and on focus only when the focus came from Tab. Focus that a closing
+// menu or dialog gives back to its button must not open it, and :focus-visible cannot tell those
+// apart (after any typing, Chrome marks that returned focus as visible). Preventing the focus event's
+// default stops Radix from opening the tooltip for it.
 export function Tip({
   content,
   children,
@@ -32,13 +55,20 @@ export function Tip({
   if (content === null || content === undefined || content === "") return children;
   return (
     <Tooltip.Root>
-      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+      <Tooltip.Trigger
+        asChild
+        onFocus={(e) => {
+          if (lastInput !== "tab") e.preventDefault();
+        }}
+      >
+        {children}
+      </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
           side="top"
           sideOffset={6}
           collisionPadding={8}
-          className="tooltip z-50 max-w-[280px] rounded-cell bg-fg px-2 py-[5px] font-mono text-[10.5px] leading-[1.45] tracking-[0.08em] text-bg uppercase"
+          className="tooltip pointer-events-none z-50 max-w-[280px] rounded-cell bg-fg px-2 py-[5px] font-mono text-[10.5px] leading-[1.45] tracking-[0.08em] text-bg uppercase"
         >
           {content}
         </Tooltip.Content>
@@ -165,7 +195,7 @@ export function LiveDot() {
   return <span className="dot live-dot" aria-hidden />;
 }
 
-// A surface-colored placeholder bar shown while something loads. Size it with classes.
+// A surface-colored bar shown while something loads. Size it with classes.
 export function Skeleton({ className = "" }: { className?: string }) {
   return <span className={`skeleton block ${className}`} aria-hidden />;
 }

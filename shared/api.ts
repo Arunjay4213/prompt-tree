@@ -112,7 +112,8 @@ export const CONVERSATION_ID_PATTERN = /^[a-z0-9-]{8,64}$/;
 // or null when no file exists (the conversation was deleted elsewhere).
 
 // live:   at least one model provider is configured, answers come from real models
-// demo:   DEMO_MODE=1, only the demo models, answers are placeholder text, no key needed, no money spent
+// demo:   --demo or DEMO_MODE=1, only the demo models, answers are replayed from a recorded sample conversation
+//         or are a fixed sample answer, no key needed, no money spent
 // no_key: no provider is configured and demo mode is off; `models` is empty and
 //         /api/complete answers with an error event
 export type ServerMode = "live" | "demo" | "no_key";
@@ -126,7 +127,9 @@ export type ServerMode = "live" | "demo" | "no_key";
 export type ModelInfo = { id: string; name: string; provider: string; providerName: string };
 
 // defaultModel is an id from `models`, or null when `models` is empty.
-export type Health = { mode: ServerMode; models: ModelInfo[]; defaultModel: string | null };
+// demo is present only in demo mode when the sample conversation loaded: suggestedPrompt is the
+// sample's first question, offered on the start screen; sending it replays the recorded answer.
+export type Health = { mode: ServerMode; models: ModelInfo[]; defaultModel: string | null; demo?: { suggestedPrompt: string } };
 
 export type SaveConflict = { error: string; currentUpdatedAt: number | null };
 

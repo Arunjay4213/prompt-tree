@@ -54,7 +54,7 @@ export function Sidebar() {
   return (
     <aside
       aria-label="Conversations"
-      inert={view === "collapsed"}
+      inert={view !== "shown"}
       className={`shrink-0 overflow-hidden transition-[width] duration-250 ease-out-expo ${view === "shown" ? "w-[248px]" : "w-0"}`}
     >
       <div className="flex h-full w-[248px] flex-col border-r border-line bg-bg">

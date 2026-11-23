@@ -2,7 +2,7 @@
   "name": "prompt-tree",
   "private": true,
   "version": "0.1.0",
-  "description": "A local web app for talking to a model in a tree of cards, where each branch sends the model only its own path back to the root.",
+  "description": "A local web app for talking to a language model in a tree of branches, where each branch sends the model only its own path back to the first question.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,8 +18,11 @@
     "branching",
     "tree",
     "conversation",
+    "context",
     "openai",
     "anthropic",
+    "claude",
+    "openrouter",
     "ollama",
     "opencode",
     "local-first"
@@ -30,11 +33,13 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,green \"pnpm dev:server\" \"pnpm dev:web\"",
-    "dev:demo": "DEMO_MODE=1 pnpm dev",
-    "dev:server": "tsx watch --env-file-if-exists=.env server/index.ts",
+    "dev:demo": "concurrently -k -n server,web -c blue,green \"pnpm dev:server:demo\" \"pnpm dev:web\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:server:demo": "tsx watch server/index.ts --demo",
     "dev:web": "vite",
     "build": "vite build",
-    "start": "tsx --env-file-if-exists=.env server/index.ts",
+    "start": "tsx server/index.ts",
+    "start:demo": "tsx server/index.ts --demo",
     "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "e2e": "node tools/e2e.mjs"
   },

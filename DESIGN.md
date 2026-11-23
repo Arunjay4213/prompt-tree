@@ -146,12 +146,12 @@ Full window, no page scroll. Three columns separated by 1px `line` hairlines. Al
 
 ### Top bar
 
-The bar degrades in a fixed order as it gets narrower, and nothing ever overflows or overlaps: first the counts label is dropped, then the mode tag shortens to its dot and one word, then the save state becomes a colored dot with a tooltip. The title keeps at least 120px. The sidebar toggle and the three icon buttons are always fully visible.
+The bar degrades in a fixed order as it gets narrower, and nothing ever overflows or overlaps: first the counts label is dropped, then the mode tag shortens to its dot and one word, and only then is the title cut, while the save state becomes a colored dot with a tooltip. The title is shown in full whenever the counts are shown, and keeps at least 120px. The sidebar toggle and the three icon buttons are always fully visible.
 
 Left: sidebar toggle, then the conversation title (UI text 14px weight 500; click to edit in place, Enter saves, Escape cancels).
 Middle-left after the title: a mono label with counts, for example `6 THREADS · 14 TURNS`.
 Right: save state as a mono small label (`SAVED`, `SAVING`, or `NOT SAVED` in fail color), then ghost buttons: Fold all, Open all, Fit view.
-In demo mode or no-key mode a tag sits before the save state (`DEMO - PLACEHOLDER ANSWERS`, or `NO API KEY` with the fix in its tooltip).
+In demo mode or no-key mode a tag sits before the save state (`DEMO MODE`, or `NO API KEY` with the fix in its tooltip).
 
 ## 6. Canvas
 
@@ -179,7 +179,7 @@ Width 380. Background `bg`. Border 1px `line`. Radius 6. No shadow.
 ```
 
 - **Header** (padding 0 12, bottom hairline `line-soft` when open): path number as a mono number in faint (`ROOT` for the root thread), the title (card title style, one line, ellipsis), then on the right the turn count as a mono number, a `+3 HIDDEN` tag when branches are hidden (click shows them), and the fold chevron ghost button (rotates 180 degrees, 200ms).
-- **Turn row** (padding 10 12): a 24px left gutter with the turn index as a mono number (`01`, `02`), then the prompt (card prompt style, max 2 lines) and the answer preview (max 4 lines, plain text with markdown stripped).
+- **Turn row** (padding 10 12): a 24px left gutter with the turn index as a mono number (`01`, `02`), then the prompt (card prompt style, max 2 lines) and the answer preview (plain text with markdown stripped; max 4 lines, or 6 lines when it is the card's only turn, so a one-turn card fills its minimum height with text instead of a blank band).
   Hover: background `surface` at 50% and two ghost buttons (clip toggle, branch) appear at the right end of the prompt's first line. That space is always reserved, so text never sits under a button.
 - **Clipped turn**: a 2px accent bar on the left edge of the row, the turn index in accent, and the clip toggle always visible in accent. If the turn has excerpt clips, a small "in output" tag `2 EXCERPTS`.
 - **Live turn**: instead of the preview while waiting, a mono small label `THINKING` with three dots that pulse in sequence. While streaming, the preview shows the last four lines of the text and a 6px accent dot pulses next to a `WRITING` label.
@@ -204,7 +204,8 @@ Width 380. Background `bg`. Border 1px `line`. Radius 6. No shadow.
 ### Overview mode (zoom below 0.55)
 
 Turn text is unreadable when zoomed far out, so below 0.55 zoom every card switches to an overview look with the same outer size:
-the body text is hidden and the thread title is shown in large type (sized so it reads like 13px on screen, max 3 lines, weight 500) next to its path number, with the clip count and live dot if any.
+the body text is hidden and the thread title is shown in large type (sized so it reads like 13px on screen, max 2 lines with an ellipsis, weight 500) under its path number, with the clip count and live dot if any.
+An open card is never shorter than 200px, so even at zoom 0.35 every open card has room for that label row and two title lines; a folded card or a new empty branch shows its title on one line.
 Switching between the two looks is a 150ms cross-fade, and it never changes the layout.
 
 ### Edges
@@ -238,6 +239,7 @@ The active tab is fg with a 1.5px fg underline that sits on the hairline. The in
 Padding 24px left and right.
 Three zones: a fixed header (generation picker, title, actions) with a bottom hairline, a scrolling body (the whole conversation the thread sees), and the composer fixed at the bottom.
 Selecting a thread shows its latest turn: if that turn fits in the body, the body is scrolled to the bottom; if it is taller than the body, its first line (the `YOU` label) is placed a small gap below the top of the body.
+When that tall turn is a branch's first own message, the branch's generation header row is placed at the top instead, so it is clear where the branch starts and that earlier messages are above.
 A branch with no turns of its own yet shows the message it branched from, from its `YOU` label, a small gap below the top of the body.
 The header is always visible.
 
@@ -260,9 +262,9 @@ The header is always visible.
    - The prompt (prompt-in-panel style).
    - A label row: the model name as a mono small label, and when live an accent pulse dot with `THINKING` or `WRITING`, and a small secondary Stop button on the right. For a finished answer the right side of this row holds two icon buttons, Add to output and Branch. The row sticks to the top of the scrolling body while its answer is in view (background bg, bottom hairline `line-soft` only while stuck), so these two actions are always reachable while reading a long answer.
    - The answer as markdown (reading body).
-   - An action row under the answer: ghost buttons with text, mono small label style: `ADD TO OUTPUT` (becomes the "in output" tag `IN OUTPUT` with a check icon when clipped; click removes), `BRANCH`, `SPLIT OFF` (not on the first turn), `COPY`. The row is faint at rest and fg on hover of the turn. On the last turn it is always fg.
+   - An action row under the answer: ghost buttons with text, mono small label style: `ADD TO OUTPUT` (becomes the "in output" tag `IN OUTPUT` with a check icon when clipped; click removes), `BRANCH`, `MOVE TO A NEW BRANCH` (not on the first turn), `COPY`. The row is faint at rest and fg on hover of the turn. On the last turn it is always fg.
    - If the turn has excerpt clips: a tag `2 EXCERPTS IN OUTPUT`.
-   - Branch per option: when the answer has options, a block under the answer and above the action row: the label `BRANCH PER OPTION`, then one row per option as a ghost row button (corner arrow, the option number as a mono number, the option title, truncated to one line), and a small secondary button `Branch all` at the end of the label row. An option that already has a branch shows that branch's path number and links to it.
+   - Branch per option: when the answer has options (only when its prompt asked for alternatives, see `CLAUDE.md`), a block under the answer and above the action row: the label `BRANCH PER OPTION`, then one row per option as a ghost row button (corner arrow, the option number as a mono number, the option title, truncated to one line), and a small secondary button `Branch all` at the end of the label row. An option that already has a branch shows that branch's path number and links to it.
    - If branches leave from this turn: a list of links under the action row, one per branch: a small corner arrow, the path number as a mono number, and the branch title. Click selects that branch.
    - 28px of space and a `line-soft` hairline between turns.
    - Failed turn: a box with a 1px fail border: label `FAILED`, the message, and two small buttons: Retry (secondary) and Remove (ghost).
@@ -275,12 +277,12 @@ The header is always visible.
 ### Composer
 
 - A top hairline, padding 16px 24px.
-- A textarea with no border of its own inside a box with a 1px `line` border, radius 6; the box border turns fg when focused (no outline ring inside). Text 15px. Grows with the content up to 40% of the panel height, then scrolls. Placeholder in faint: "Continue this thread..." or, for a new branch, "First prompt of this branch...".
-- Under the box, one row: on the left, when the panel is at least about 560px wide, a mono small label `SHIFT+ENTER NEW LINE`; on the right the secondary button "Branch off" with the key hint `CTRL+ENTER` inside it and the primary button "Continue" with the key hint `ENTER` inside it.
+- A textarea with no border of its own inside a box with a 1px `line` border, radius 6; the box border turns fg when focused (no outline ring inside). Text 15px. Grows with the content up to 40% of the panel height, then scrolls. Placeholder in muted: "Write a message..." or, for a new branch, "First message of this branch...".
+- Under the box, one row: on the left, when the panel is at least about 560px wide, a mono small label `SHIFT+ENTER NEW LINE`; on the right the secondary button "New branch" with the key hint `CTRL+ENTER` inside it and the primary button "Send" with the key hint `ENTER` inside it.
 - The row must never wrap or cut text at any panel width from 380 to 720. At narrow widths the left label is dropped first.
-- Ask each: when the last answer has options, a third button sits left of "Branch off": secondary, labelled `Ask each` with the option count as a mono number and the key hint `CTRL+SHIFT+ENTER`. It needs text. Its tooltip lists the option titles it will split across. While the rewrite request runs, the box is disabled and the left label reads `SPLITTING ACROSS 2 OPTIONS` with the accent pulse dot. When the typed text refers to each option, Ask each takes the primary look and Continue the secondary look.
-- With three buttons the row must still never wrap: as the panel narrows, the key hints inside the buttons are dropped first (Ask each, then Branch off, then Continue), then the model picker shrinks to its minimum; at 380 all three buttons and the picker fit on one row.
-- "Branch off" is enabled even when the box is empty (it then creates an empty branch). "Continue" needs text; when the box is empty its tooltip says "Type a message first".
+- Ask each: when the last answer has options, a third button sits left of "New branch": secondary, labelled `Ask each` with the option count as a mono number and the key hint `CTRL+SHIFT+ENTER`. It needs text. Its tooltip lists the option titles it will split across. While the rewrite request runs, the box is disabled and the left label reads `SPLITTING ACROSS 2 OPTIONS` with the accent pulse dot. When the typed text refers to each option, Ask each takes the primary look and Send the secondary look.
+- With three buttons the row must still never wrap: as the panel narrows, the key hints inside the buttons are dropped first (Ask each, then New branch, then Send), then the model picker shrinks to its minimum; at 380 all three buttons and the picker fit on one row.
+- "New branch" is enabled even when the box is empty (it then creates an empty branch). "Send" needs text; when the box is empty its tooltip says "Type a message first".
 - For an empty thread there is one primary button, "Send".
 - When the thread is busy, the box is disabled and its placeholder says "Waiting for the answer..." (the left label says `WAITING FOR THE ANSWER` when there is room). When the last turn failed, it says `RETRY OR REMOVE THE FAILED TURN FIRST`.
 
@@ -298,7 +300,7 @@ The header is always visible.
 2. **Clip list**, drawn as bordered cells (top and bottom hairlines, `line-soft` between). Each cell:
    - Left: a drag handle (six dots, faint, fg on hover) and the position as a mono number (`01`).
    - Top line: the branch path number and thread title as a mono small label, and a tag `EXCERPT` for excerpts.
-   - The text, 13.5px, clamped to 4 lines, with a `SHOW MORE` text button when clamped.
+   - The text as plain text, 13.5px, clamped to 3 whole lines, with a `Show more` text button that shows the full rendered markdown.
    - On hover, on the right: ghost buttons Move up, Move down, Remove.
    - Click on the label line selects the clip's card and brings it into view on the canvas.
    - Drag to reorder with `@dnd-kit/sortable`: the dragged cell gets a 1px fg border and background bg, the others move smoothly.
@@ -355,7 +357,8 @@ The look stays the same (light, hairlines, one accent). What changes is that the
 
 - One box, then one row: the model picker on the left; on the right `Ask each` (only when the last answer has options), `New branch`, `Send`.
 - `Send` is the primary button. Empty box: `Send` is disabled and looks calmly inactive (surface background, muted text, no opacity trick), and `New branch` stays active.
-- No button is ever drawn at reduced opacity. Disabled means: surface background, muted text, a `not-allowed` cursor, and a tooltip that gives the reason.
+- No button is ever drawn at reduced opacity. A disabled text button has a surface background, muted text, a `not-allowed` cursor, and a tooltip that gives the reason.
+- A disabled icon-only button has no fill and no border change: only its icon, drawn in the `line` color, with the default cursor and no hover effect. It keeps its tooltip that gives the reason.
 
 ### Actions on a turn
 

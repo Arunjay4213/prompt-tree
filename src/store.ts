@@ -438,11 +438,18 @@ async function runStream(
   finish(end);
 }
 
-function startTurnStream(conversationId: string, turnId: string) {
+async function startTurnStream(conversationId: string, turnId: string) {
+  if (get().health.kind === "loading") {
+    // Sent before any model was chosen: the turn waits for health and takes the chosen model.
+    const model = await chosenModelWhenReady();
+    writeConversation(conversationId, (c) => (tree.findTurn(c, turnId)?.turn.model === null ? tree.setWaitingTurnModel(c, turnId, model) : c));
+  }
   const conv = get().conversations[conversationId];
-  if (!conv) return;
+  const turn = conv ? tree.findTurn(conv, turnId)?.turn : undefined;
+  // The turn can be gone (deleted) or no longer waiting while health was loading.
+  if (!conv || turn?.status !== "waiting") return;
   const messages = tree.buildMessages(conv, turnId);
-  const model = tree.findTurn(conv, turnId)?.turn.model ?? null;
+  const model = turn.model;
   const target: ShownTarget = { kind: "turn", conversationId, turnId };
   void runStream(target, { messages, model }, (text) => queueText(target, text), (end) => {
     writeConversation(
@@ -472,7 +479,7 @@ const TITLE_SYSTEM =
 const TITLE_INPUT_CHARS = 1500;
 
 // After the first turn of a thread finishes, live mode asks the model for a short title.
-// Demo and no-key mode never ask: their answers are placeholders, not titles.
+// Demo and no-key mode never ask: no model would write the title.
 function requestTitle(conversationId: string, turnId: string) {
   const health = get().health;
   if (health.kind !== "ready" || health.health.mode !== "live") return;
@@ -528,6 +535,18 @@ function chosenModel(): string | null {
   return choice.kind === "chosen" ? choice.id : null;
 }
 
+// Resolves once health has arrived or failed, and the model choice is settled.
+let healthSettled: () => void = () => {};
+const healthDone = new Promise<void>((resolve) => (healthSettled = resolve));
+
+// The chosen model, after waiting for health while it is still loading. Until health arrives no
+// model is chosen, so a request made in the first instant after the page loads waits here instead
+// of failing for lack of a model.
+async function chosenModelWhenReady(): Promise<string | null> {
+  if (get().health.kind === "loading") await healthDone;
+  return chosenModel();
+}
+
 // `preferred` when the server offers it, otherwise the current choice.
 function availableModel(preferred: string | null): string | null {
   return preferred !== null && selectModels(get()).some((m) => m.id === preferred) ? preferred : chosenModel();
@@ -547,8 +566,11 @@ export async function boot() {
       set({ health: { kind: "ready", health } });
       settleModelChoice();
     })
-    .catch(() => set({ health: { kind: "unreachable" } }));
+    .catch(() => set({ health: { kind: "unreachable" } }))
+    .finally(() => healthSettled());
   await reloadList();
+  // The person may have opened or started a conversation while the list was loading.
+  if (get().openId !== null) return;
   const lastId = readPref(PREF_LAST_CONVERSATION);
   const list = get().list;
   const target = list.find((c) => c.id === lastId) ?? list[0];
@@ -982,20 +1004,20 @@ export function sendFirstPrompt(prompt: string) {
     writePref(PREF_FIRST_CONVERSATION, conv.id);
   }
   writePref(PREF_LAST_CONVERSATION, conv.id);
-  startTurnStream(conv.id, result.turnId);
+  void startTurnStream(conv.id, result.turnId);
 }
 
-// "Continue": the turn is added to the given card.
+// "Send": the turn is added to the given card.
 export function continueHere(threadId: string, prompt: string) {
   const conv = openConversationNow();
   if (!conv) return;
   const result = tree.appendTurn(conv, threadId, prompt, chosenModel(), Date.now());
   writeConversation(conv.id, () => result.conv);
   setDraft(threadId, "");
-  startTurnStream(conv.id, result.turnId);
+  void startTurnStream(conv.id, result.turnId);
 }
 
-// "Branch off": the turn goes into a new branch card after the last turn.
+// "New branch": the turn goes into a new branch card after the last turn.
 export function branchOff(threadId: string, prompt: string) {
   const conv = openConversationNow();
   if (!conv) return;
@@ -1005,7 +1027,7 @@ export function branchOff(threadId: string, prompt: string) {
   setDraft(threadId, "");
   set({ tab: "thread" });
   requestView(result.threadId, "reveal");
-  startTurnStream(conv.id, result.turnId);
+  void startTurnStream(conv.id, result.turnId);
 }
 
 // "Branch": an empty branch card after the turn, selected, with the composer focused.
@@ -1087,18 +1109,17 @@ export function branchAllOptions(threadId: string, turnId: string, titles: strin
 
 // One question about every option of the thread's last answer: one rewrite request (silent, not a
 // turn), then one branch per option with its own first turn, all started at once.
-export function askEach(threadId: string, question: string) {
+export async function askEach(threadId: string, question: string) {
   const conv = openConversationNow();
   const last = conv ? tree.findThread(conv, threadId)?.turns.at(-1) : undefined;
   if (!conv || !last || !tree.canBranchFrom(last) || get().splits[threadId]) return;
   const options = answerOptions(last.answer);
   if (options.length < 2) return;
-  const model = chosenModel();
   const split: SplitState = { kind: "splitting", conversationId: conv.id, turnId: last.id, options };
   set((s) => ({ splits: { ...s.splits, [threadId]: split } }));
-  const health = get().health;
-  if (health.kind !== "ready" || health.health.mode !== "live" || model === null) {
-    // Demo answers cannot rewrite a question (and without a model nothing can): the fallback prompts.
+  const model = await chosenModelWhenReady();
+  if (model === null) {
+    // Without a model nothing can rewrite the question: the fallback prompts.
     finishSplit(threadId, split, fallbackPrompts(options, question), model);
     return;
   }
@@ -1143,7 +1164,7 @@ function finishSplit(threadId: string, split: SplitState, prompts: string[], mod
     set({ tab: "thread" });
     requestView(first, "reveal");
   }
-  for (const turnId of result.turnIds) startTurnStream(conv.id, turnId);
+  for (const turnId of result.turnIds) void startTurnStream(conv.id, turnId);
 }
 
 export function dismissTip() {
@@ -1163,7 +1184,7 @@ export function retryTurn(turnId: string) {
   const model = availableModel(tree.findTurn(conv, turnId)?.turn.model ?? null);
   writeConversation(conv.id, (c) => tree.retryTurn(c, turnId, model));
   if (removed > 0) showToast(`Removed ${removed} ${removed === 1 ? "excerpt" : "excerpts"} from the old answer`);
-  startTurnStream(conv.id, turnId);
+  void startTurnStream(conv.id, turnId);
 }
 
 export function removeTurn(turnId: string) {
@@ -1293,13 +1314,19 @@ function combineMessage(conv: Conversation): string {
   ].join("\n\n---\n\n");
 }
 
-export function combine() {
+export async function combine() {
   const open = openConversationNow();
   if (!open || open.clips.length === 0) return;
   const conversationId = open.id;
-  const model = chosenModel();
-  const conv = tree.startOutput(open, model);
-  writeConversation(conversationId, () => conv);
+  let model = chosenModel();
+  writeConversation(conversationId, () => tree.startOutput(open, model));
+  if (get().health.kind === "loading") {
+    // Started before any model was chosen: the run waits for health and takes the chosen model.
+    model = await chosenModelWhenReady();
+    writeConversation(conversationId, (c) => (c.output.status === "waiting" ? tree.startOutput(c, model) : c));
+  }
+  const conv = get().conversations[conversationId];
+  if (!conv || conv.output.status !== "waiting") return;
   const request = { system: COMBINE_SYSTEM, messages: [{ role: "user" as const, content: combineMessage(conv) }], model };
   const target: ShownTarget = { kind: "output", conversationId };
   void runStream(target, request, (text) => queueText(target, text), (end) => {

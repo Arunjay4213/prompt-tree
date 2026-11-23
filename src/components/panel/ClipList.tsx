@@ -14,6 +14,7 @@ import { ArrowDown, ArrowUp, GripVertical, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Clip, Conversation } from "../../../shared/api";
 import { moveClipTo, removeClip, requestView, selectThread } from "../../store";
+import { plainPreview } from "../../text";
 import { Markdown } from "../Markdown";
 import * as tree from "../../tree";
 import { ICON, IconButton, Tag, Tip } from "../ui";
@@ -48,44 +49,28 @@ export function ClipList({ conv }: { conv: Conversation }) {
   );
 }
 
-// Four lines of 13.5px text at line height 1.5.
-const CLAMP_HEIGHT = 81;
-
-// clamped: the text shows at most four lines. expanded: all of it.
+// clamped: three lines of the clip as plain text, so the preview always ends on a whole line.
+// expanded: the clip as rendered markdown.
 type ClipView = "clamped" | "expanded";
-// Whether the clamped text is longer than four lines (then SHOW MORE is offered).
+// Whether the clamped preview leaves something out (then Show more is offered).
 type ClipOverflow = "fits" | "overflows";
+
+// A code block is dropped from the plain preview, so a clip with one always offers Show more.
+const CODE_FENCE = /^\s{0,3}(```|~~~)/m;
 
 function ClipCell({ conv, clip, index, count, pathNumber }: { conv: Conversation; clip: Clip; index: number; count: number; pathNumber: string }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: clip.id });
   const [view, setView] = useState<ClipView>("clamped");
   const [overflow, setOverflow] = useState<ClipOverflow>("fits");
-  const textRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLParagraphElement>(null);
   const thread = tree.findThread(conv, clip.threadId);
   const text = tree.clipText(conv, clip).trim();
+  const preview = plainPreview(text);
 
-  // Clamped: the clip shows the whole blocks (paragraphs, lists, code blocks) that fit in four
-  // lines, so nothing is cut through the middle; a single taller first block shows four lines.
   useLayoutEffect(() => {
-    const el = textRef.current;
+    const el = previewRef.current;
     if (!el) return;
-    if (view === "expanded") {
-      el.style.maxHeight = "";
-      return;
-    }
-    const measure = () => {
-      const md = el.querySelector<HTMLElement>(".markdown");
-      let cut = 0;
-      for (const child of md?.children ?? []) {
-        const block = child as HTMLElement;
-        const bottom = block.offsetTop - (md?.offsetTop ?? 0) + block.offsetHeight;
-        if (bottom > CLAMP_HEIGHT) break;
-        cut = bottom;
-      }
-      const height = cut > 0 ? cut : CLAMP_HEIGHT;
-      el.style.maxHeight = `${height}px`;
-      setOverflow((md?.scrollHeight ?? el.scrollHeight) > height + 1 ? "overflows" : "fits");
-    };
+    const measure = () => setOverflow(el.scrollHeight > el.clientHeight + 1 || CODE_FENCE.test(text) ? "overflows" : "fits");
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
@@ -139,9 +124,16 @@ function ClipCell({ conv, clip, index, count, pathNumber }: { conv: Conversation
             <IconButton icon={X} label="Remove from output" tone="danger" onClick={() => removeClip(clip.id)} />
           </span>
         </div>
-        {/* The clip as markdown (a clipped code block looks like code). Clamped: four lines high. */}
-        <div ref={textRef} data-testid="clip-text" className={`clip-markdown mt-1 ${view === "clamped" ? "overflow-hidden" : ""}`}>
-          {text ? <Markdown text={text} /> : <p className="text-[13.5px] leading-[1.5] text-muted">The answer is empty.</p>}
+        <div data-testid="clip-text" className="clip-markdown mt-1">
+          {!text ? (
+            <p className="text-[13.5px] leading-[1.5] text-muted">The answer is empty.</p>
+          ) : view === "clamped" ? (
+            <p ref={previewRef} className="line-clamp-3 text-[13.5px] leading-[1.5] [overflow-wrap:anywhere] text-fg">
+              {preview}
+            </p>
+          ) : (
+            <Markdown text={text} />
+          )}
         </div>
         {(overflow === "overflows" || view === "expanded") && (
           <button

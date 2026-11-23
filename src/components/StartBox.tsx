@@ -1,7 +1,8 @@
+import { CornerDownRight } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { selectOpenConversation, sendFirstPrompt, setDraft, useStore } from "../store";
 import { ModelPicker } from "./ModelPicker";
-import { Button, Label, LabelSm } from "./ui";
+import { Button, ICON, Label, LabelSm } from "./ui";
 
 const STEPS = [
   { n: "01", name: "Ask", text: "Start with one question." },
@@ -16,6 +17,8 @@ export function StartBox() {
   const text = useStore((s) => s.drafts[rootId] ?? "");
   const setText = (value: string) => setDraft(rootId, value);
   const focusTick = useStore((s) => s.composerFocusTick);
+  // Demo mode only: the recorded sample's first question, which replays a real answer.
+  const suggested = useStore((s) => (s.health.kind === "ready" ? s.health.health.demo?.suggestedPrompt : undefined));
   const ref = useRef<HTMLTextAreaElement>(null);
   const empty = text.trim() === "";
 
@@ -56,6 +59,18 @@ export function StartBox() {
               }}
               className="scroll-y mt-6 block w-full resize-none bg-transparent text-[15px] leading-[1.5] text-fg outline-none placeholder:text-muted"
             />
+            {suggested && (
+              <button
+                type="button"
+                data-testid="start-suggestion"
+                title={suggested}
+                onClick={() => sendFirstPrompt(suggested)}
+                className="action-btn -ml-2 mt-3 max-w-[calc(100%+16px)]"
+              >
+                <CornerDownRight {...ICON} className="shrink-0" />
+                <span className="truncate">Try: {suggested}</span>
+              </button>
+            )}
           </div>
           <div className="flex items-center justify-between gap-4 border-t border-line-soft px-6 py-3">
             <div className="flex min-w-0 items-center gap-3">

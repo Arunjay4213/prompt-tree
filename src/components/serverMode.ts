@@ -19,9 +19,9 @@ const MODES: Record<ServerModeKind, Omit<ServerMode, "kind">> = {
   live: { dot: "bg-pass", tag: "", short: "", tip: "Live: answers come from real models and cost money" },
   demo: {
     dot: "bg-accent",
-    tag: "Demo - placeholder answers",
+    tag: "Demo mode",
     short: "Demo",
-    tip: "Demo mode: placeholder answers from two demo models, no real model is called and nothing is spent (started with pnpm dev:demo)",
+    tip: "Demo mode: no model is called and nothing is spent. The suggested question replays answers recorded from a real model, and any other question gets a sample answer (started with pnpm dev:demo)",
   },
   no_key: {
     dot: "bg-fail",

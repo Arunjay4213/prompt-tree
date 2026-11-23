@@ -12,10 +12,11 @@ The quality bar for the interface is https://arunjay.dev/blamingo, and the visua
 ## Run
 
 - `pnpm dev` starts the server (port 8787) and the web app (port 5173, proxies `/api` to the server).
-- `pnpm dev:demo` does the same with `DEMO_MODE=1`: placeholder answers, no key, no cost.
+- `pnpm dev:demo` does the same in demo mode (the server gets `--demo`): recorded and sample answers, no key, no cost (see "Demo mode" below).
+- Demo mode is on when the server is started with `--demo` or when `DEMO_MODE=1` is in the environment or `.env`. Scripts use `--demo`, because `VAR=value command` does not work in Windows shells.
 - `pnpm typecheck` checks both the web app and the server.
 - `pnpm e2e` drives the running demo app in a real browser through the main flows (`tools/e2e.mjs`). Run `pnpm dev:demo` first.
-- `pnpm build` then `pnpm start` serves the built app from the server alone.
+- `pnpm build` then `pnpm start` serves the built app from the server alone; `pnpm start:demo` does the same in demo mode.
 - Keys live in `.env`. Never read, print, or commit `.env`.
 - Models come from providers. A provider is active when its key (or base URL) is set in `.env`; see "Models and providers" below.
 - `PORT` overrides the server port (the Vite proxy follows it).
@@ -53,7 +54,7 @@ The quality bar for the interface is https://arunjay.dev/blamingo, and the visua
 - Continuing a thread adds a turn to the same card. No new card appears. This is how a direction stays compact.
 - **Branching** creates a new card connected to the turn it branched from. The user decides, per message, whether it continues the card or becomes a branch.
 - The choice is reversible:
-  - **Split off from here** (on any turn except the first of a card) moves that turn and the later turns of the card into a new branch card.
+  - **Move to a new branch** (on any turn except the first of a card) moves that turn and the later turns of the card into a new branch card.
   - **Merge into parent** (on a card that branches from the *last* turn of its parent) appends its turns to the parent card.
   - Both keep the model context of every turn exactly the same.
 - Cards can be **folded** to one line, and a card can **hide its branches** (the whole subtree below it), so a big tree stays readable.
@@ -76,7 +77,7 @@ The numbers are computed from the tree, never stored.
 
 ### Models and providers
 
-- Providers: `openai` (OpenAI Responses API), `anthropic` (Claude, Messages API), `compatible` (any OpenAI-compatible Chat Completions endpoint, for example OpenRouter, Ollama, LM Studio, Groq, or Gemini's compatible endpoint), `opencode` (a local opencode V2 server the person runs with `opencode serve`), and `demo` (placeholder answers).
+- Providers: `openai` (OpenAI Responses API), `anthropic` (Claude, Messages API), `compatible` (any OpenAI-compatible Chat Completions endpoint, for example OpenRouter, Ollama, LM Studio, Groq, or Gemini's compatible endpoint), `opencode` (a local opencode V2 server the person runs with `opencode serve`), and `demo` (recorded and sample answers, see "Demo mode" below).
 - A model id is `<provider>:<model name>`, for example `openai:gpt-6-luna` or `anthropic:claude-opus-5-5`.
 - `.env` decides what is available: `OPENAI_API_KEY` with optional `OPENAI_MODELS`; `ANTHROPIC_API_KEY` with optional `ANTHROPIC_MODELS`; `COMPATIBLE_BASE_URL` with `COMPATIBLE_MODELS`, optional `COMPATIBLE_API_KEY` and `COMPATIBLE_NAME`. `OPENCODE_URL` and `OPENCODE_PASSWORD` (the opencode server's own password) with optional `OPENCODE_MODELS`; `DEFAULT_MODEL` picks the default.
 - The opencode provider never sees a model login: opencode holds the person's access (a ChatGPT plan, Copilot, API keys, local models) and prompt-tree only talks to its local server. Each request uses a fresh opencode session with every tool denied, sends the branch's history as one transcript prompt, and deletes the session afterwards. prompt-tree gives opencode a plain chat agent of its own (a file in the work folder it uses for sessions), so opencode's coding instructions are replaced. Sessions are titled `prompt-tree request`, and leftovers with that title are removed at startup.
@@ -84,8 +85,30 @@ The numbers are computed from the tree, never stored.
 - The person picks the model in the composer. The choice is remembered in the browser and applies to the next message, so different branches can use different models.
 - Each turn records the model that answered it, and its label is shown on the turn. Retry uses the turn's own model when it is still available, otherwise the current choice.
 - Title requests and Combine use the same model as the turn or the current choice.
-- Demo mode offers two placeholder models so the picker can be tried without a key.
-- Demo mode stores its conversations in a separate folder (`data/demo`), so placeholder and test conversations never mix with real ones in `data/conversations`.
+
+### Demo mode
+
+- Demo mode (`--demo` or `DEMO_MODE=1`) makes no network calls and needs no key.
+  It offers two demo models, `demo-a` and `demo-b`, so the picker can be tried.
+- Demo mode stores its conversations in a separate folder (`data/demo`), so demo and test conversations never mix with real ones in `data/conversations`.
+- The app ships one conversation recorded from a real model, `server/demo/sample.json`, with `server/demo/script.json` holding the one thing a conversation does not store: the question that was asked with Ask each.
+- At server start in demo mode, when `data/demo` has no conversations, the sample is copied in as a normal conversation (same id, `createdAt` and `updatedAt` set to the start time).
+  A deleted sample comes back only when the folder is empty at a later start.
+- If the sample cannot be read, demo mode still works with the sample answer only, and the server logs one line saying so.
+- `GET /api/health` in demo mode carries `demo.suggestedPrompt`, the sample's first question.
+  The start screen offers it as a "Try: ..." button.
+- Each demo answer streams in small pieces over about two seconds. It is chosen by these rules, first match wins:
+  1. Combine: the sample's combined document when every collected item comes from the sample (its text, ignoring whitespace, is found in one of the sample's recorded answers).
+     Otherwise a demo document that says demo mode does not call a model, then the collected items in order, each under a short heading with its branch.
+  2. The Ask each rewrite: a JSON array with one prompt per option.
+     When the question says "each" (or "each one", "each option", "each of them"), the first of those words is replaced with the option title ("What does each cost?" becomes "What does Trains cost?"); otherwise the prompt is "For <option>, <question>" with the question's first letter in lower case.
+     When the question equals the sample's Ask each question, the sample's recorded prompts instead.
+  3. A message equal to a prompt in the sample (trimmed, any case, whitespace collapsed): that turn's recorded answer.
+  4. A message that names one of the sample's options (the titles of the branches that leave from the sample's first turn, any case): that branch's first answer.
+  5. Anything else: a short sample answer that says it is one, with three options under headings, a list and a code block.
+     Its options show when the question asked for options, and Ask each shows when a follow-up says "each"; the answer's second sentence tells the visitor so.
+- Turns in the sample name the real model that wrote them (for example `openai:gpt-6-luna`).
+  Their label shows it, and new messages and retries use a demo model.
 
 ### Titles
 
@@ -109,16 +132,18 @@ The numbers are computed from the tree, never stored.
 
 ### Sending
 
-- The composer has two actions. **Send** (Enter) adds the turn to the selected card. **New branch** (Ctrl+Enter) puts the turn in a new branch card after the last turn. Shift+Enter makes a new line. (Older text and code may still say Continue and Branch off; the names in the interface are Send and New branch.)
+- The composer has two actions. **Send** (Enter) adds the turn to the selected card. **New branch** (Ctrl+Enter) puts the turn in a new branch card after the last turn. Shift+Enter makes a new line.
 - **Another branch from the same message**, on a branch, creates an empty sibling branch from the same turn.
 - **New branch** with an empty box creates an empty branch card after the last turn and focuses its composer, so a person can branch first and type second.
 - **Branch** on a turn creates an empty branch card after that turn, selects it, and focuses the composer. An empty branch that has no draft and loses selection is discarded. An empty branch that has a draft is kept.
-- **Ask each**: when the last answer of the selected thread contains options, the composer offers a third action, "Ask each" (Ctrl+Shift+Enter). It sends one question to every option at once: one branch per option, each titled with its option (a user title), each with the question rewritten to ask about only that option, all streaming in parallel. The first new branch is selected.
+- **Ask each**: when the last answer of the selected thread contains options (see Branch per option below), or when the text being typed asks about each of them ("each", "both", "every", "all the options") and the last answer has headings or a list that would count as options, the composer offers a third action, "Ask each" (Ctrl+Shift+Enter). It sends one question to every option at once: one branch per option, each titled with its option (a user title), each with the question rewritten to ask about only that option, all streaming in parallel. The first new branch is selected.
   - The rewrite is one small request to the current model before the branches start: it gets the answer, the option titles, and the question, and returns one prompt per option. It is not a turn and shows nowhere except as a short "splitting" state in the composer.
-  - If the rewrite fails, is cut off, returns the wrong number of prompts, or the server is in demo mode, each branch gets the original question with its option quoted above it. The split always happens.
-  - Enter never splits. When the text contains a word such as "each", "both", "every" or "all the options", the Ask each button is drawn as the primary action as a hint, and Continue as secondary.
+  - If the rewrite fails, is cut off, returns the wrong number of prompts, or no model is available, each branch gets the original question with its option quoted above it. The split always happens.
+  - Enter never splits. When the text contains a word such as "each", "both", "every" or "all the options", the Ask each button is drawn as the primary action as a hint, and Send as secondary.
   - An option that already has a branch still gets a new one: the question is new.
 - **Branch per option**: when an answer contains a set of options (two to eight headings of the same level; or else its first top-level list of two to eight items, but only when that list is numbered or every item starts with a bold name; a plain bulleted list of sentences is not a set of options), the options are listed under the answer. Choosing one creates a branch after that turn, titled with the option (a user title, never replaced automatically), whose draft starts with the option quoted. "Branch all" creates one branch per option and selects the first. An option that already has its branch is shown as a link to it instead.
+  Headings or list items count as options only when the message that produced the answer asked for alternatives (`askedForAlternatives`: it names options, alternatives, ways, ideas, approaches and similar words).
+  Otherwise they are sections of one answer: no "Branch per option" row and no Ask each from that answer, except when the text being typed asks about each of them (see Ask each).
 - Selecting text inside an answer offers "Add to output" (an excerpt clip) and "Branch with selection" (a new branch whose prompt box starts with the selection as a quote).
 - A branch's Thread tab shows the whole conversation it sees, ancestors first, in full.
   Earlier messages from ancestors can only be read, copied and collected; a clip taken from one belongs to the card that owns that message, not to the open branch.

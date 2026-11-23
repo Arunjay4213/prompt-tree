@@ -17,7 +17,7 @@ import {
   toggleAnswerClip,
   useStore,
 } from "../../store";
-import { answerOptions, askedForAlternatives, modelName, plural, splitQuote } from "../../text";
+import { modelName, offeredOptions, plural, splitQuote } from "../../text";
 import * as tree from "../../tree";
 import { Markdown, useStreamText } from "../Markdown";
 import { MenuItem, MoreMenu } from "../Menu";
@@ -94,7 +94,16 @@ export const TurnView = memo(function TurnView({
   const hasAnswer = turn.answer.trim() !== "";
   const finished = !inFlight && tree.canBranchFrom(turn);
   // Parsed once per answer text (memoized), and never while the answer streams.
-  const options = finished && role === "own" ? answerOptions(turn.answer) : NONE;
+  const options = finished && role === "own" ? offeredOptions(turn.prompt, turn.answer) : NONE;
+  const [look, setLookState] = useState<OptionLook>(() => chosenLooks.get(turn.id) ?? "expanded");
+  const setLook = (next: OptionLook) => {
+    chosenLooks.set(turn.id, next);
+    setLookState(next);
+  };
+  // The branch of each option, as the expanded options block links them. Those branches are left
+  // out of the list of branches under the action row, so no card is listed twice.
+  const optionBranches = options.length >= 2 ? options.map((title) => branches.findIndex((b) => b.title.trim() === title.trim())) : NONE;
+  const listed = look === "expanded" ? branches.filter((_, i) => !optionBranches.includes(i)) : branches;
   const copy = () => copyWithToast(turn.answer);
   const clip = () => toggleAnswerClip(threadId, turn.id);
   const branch = () => branchFromTurn(threadId, turn.id);
@@ -107,44 +116,48 @@ export const TurnView = memo(function TurnView({
       </span>
       <Prompt text={turn.prompt} />
 
-      <AnswerLabelRow>
-        <span data-testid="turn-model" className="label-sm min-w-0 truncate">
-          {modelName(turn.model)}
-        </span>
-        <TurnState turn={turn} />
-        <span className="flex-1" />
-        {inFlight && (
-          <Button size="sm" icon={Square} data-testid="turn-stop" onClick={() => stopTurn(turn.id)}>
-            Stop
-          </Button>
-        )}
-        {turn.status === "stopped" && isLast && (
-          <>
-            <Button size="sm" icon={RotateCcw} data-testid="turn-retry" disabledReason={facts.retry} onClick={() => retryTurn(turn.id)}>
-              Retry
+      {/* The sticky label row and the answer share this box, so the row stops sticking when the
+          answer's last lines leave, before the action row under the answer reaches the top. */}
+      <div>
+        <AnswerLabelRow>
+          <span data-testid="turn-model" className="label-sm min-w-0 truncate">
+            {modelName(turn.model)}
+          </span>
+          <TurnState turn={turn} />
+          <span className="flex-1" />
+          {inFlight && (
+            <Button size="sm" icon={Square} data-testid="turn-stop" onClick={() => stopTurn(turn.id)}>
+              Stop
             </Button>
-            <Button size="sm" variant="ghost" icon={X} data-testid="turn-remove" disabledReason={facts.remove} onClick={() => removeTurn(turn.id)}>
-              Remove
-            </Button>
-          </>
-        )}
-        {finished && <RowActions role={role} clipped={facts.clipped} onClip={clip} onBranch={branch} />}
-      </AnswerLabelRow>
+          )}
+          {turn.status === "stopped" && isLast && (
+            <>
+              <Button size="sm" icon={RotateCcw} data-testid="turn-retry" disabledReason={facts.retry} onClick={() => retryTurn(turn.id)}>
+                Retry
+              </Button>
+              <Button size="sm" variant="ghost" icon={X} data-testid="turn-remove" disabledReason={facts.remove} onClick={() => removeTurn(turn.id)}>
+                Remove
+              </Button>
+            </>
+          )}
+          {finished && <RowActions role={role} clipped={facts.clipped} onClip={clip} onBranch={branch} />}
+        </AnswerLabelRow>
 
-      <div className="mt-1">
-        {turn.status === "waiting" && <WaitingLines />}
-        {turn.status === "failed" && <FailedBox message={turn.error} turnId={turn.id} retry={facts.retry} remove={facts.remove} />}
-        {hasAnswer && turn.status !== "failed" && (
-          <div data-answer-turn={turn.id} data-answer-thread={threadId} data-answer-role={role}>
-            <Markdown text={answer} />
-          </div>
-        )}
-        {turn.status === "stopped" && !hasAnswer && <p className="text-[14px] leading-[1.5] text-muted">Stopped before any text arrived.</p>}
-        {turn.status === "truncated" && (
-          <p className="mt-4 text-[14px] leading-[1.5] text-pretty text-muted">
-            The answer reached the model's length limit and was cut off here. Send a message to get the rest.
-          </p>
-        )}
+        <div className="mt-1">
+          {turn.status === "waiting" && <WaitingLines />}
+          {turn.status === "failed" && <FailedBox message={turn.error} turnId={turn.id} retry={facts.retry} remove={facts.remove} />}
+          {hasAnswer && turn.status !== "failed" && (
+            <div data-answer-turn={turn.id} data-answer-thread={threadId} data-answer-role={role}>
+              <Markdown text={answer} />
+            </div>
+          )}
+          {turn.status === "stopped" && !hasAnswer && <p className="text-[14px] leading-[1.5] text-muted">Stopped before any text arrived.</p>}
+          {turn.status === "truncated" && (
+            <p className="mt-4 text-[14px] leading-[1.5] text-pretty text-muted">
+              The answer reached the model's length limit and was cut off here. Send a message to get the rest.
+            </p>
+          )}
+        </div>
       </div>
 
       {options.length >= 2 && (
@@ -152,9 +165,11 @@ export const TurnView = memo(function TurnView({
           threadId={threadId}
           turnId={turn.id}
           options={options}
+          optionBranches={optionBranches}
           branches={branches}
           branchNumbers={branchNumbers}
-          initial={askedForAlternatives(turn.prompt) ? "expanded" : "collapsed"}
+          look={look}
+          setLook={setLook}
         />
       )}
 
@@ -206,9 +221,9 @@ export const TurnView = memo(function TurnView({
         </Tag>
       )}
 
-      {role === "own" && branches.length > 0 && (
+      {role === "own" && listed.length > 0 && (
         <ul className="mt-3" aria-label="Branches from this turn">
-          {branches.map((b, i) => (
+          {listed.map((b) => (
             <li key={b.id}>
               <button
                 type="button"
@@ -217,7 +232,7 @@ export const TurnView = memo(function TurnView({
                 className="group -mx-2 flex h-8 w-[calc(100%+16px)] items-center gap-2 rounded-cell px-2 text-left text-muted transition-colors hover:bg-surface hover:text-fg"
               >
                 <CornerDownRight {...ICON} className="shrink-0" />
-                <span className="label-sm num shrink-0 text-fg">{branchNumbers[i]}</span>
+                <span className="label-sm num shrink-0 text-fg">{branchNumbers[branches.indexOf(b)]}</span>
                 <span className="min-w-0 truncate text-[14px]">{tree.threadTitle(b)}</span>
               </button>
             </li>
@@ -333,22 +348,21 @@ function OptionBlock({
   threadId,
   turnId,
   options,
+  optionBranches,
   branches,
   branchNumbers,
-  initial,
+  look,
+  setLook,
 }: {
   threadId: string;
   turnId: string;
   options: string[];
-  branches: { id: string; title: string }[];
+  optionBranches: number[];
+  branches: { id: string }[];
   branchNumbers: string[];
-  initial: OptionLook;
+  look: OptionLook;
+  setLook: (next: OptionLook) => void;
 }) {
-  const [look, setLookState] = useState<OptionLook>(() => chosenLooks.get(turnId) ?? initial);
-  const setLook = (next: OptionLook) => {
-    chosenLooks.set(turnId, next);
-    setLookState(next);
-  };
   if (look === "collapsed") {
     return (
       <div data-testid="option-block" data-look="collapsed" className="mt-5 border-y border-line-soft py-1">
@@ -366,10 +380,7 @@ function OptionBlock({
       </div>
     );
   }
-  const existing = options.map((title) => {
-    const i = branches.findIndex((b) => b.title.trim() === title.trim());
-    return i >= 0 ? { id: branches[i]!.id, number: branchNumbers[i] ?? "" } : null;
-  });
+  const existing = optionBranches.map((i) => (i >= 0 ? { id: branches[i]!.id, number: branchNumbers[i] ?? "" } : null));
   const missing = existing.filter((e) => e === null).length;
   return (
     <div data-testid="option-block" data-look="expanded" className="mt-5 border-y border-line-soft py-2">
@@ -467,7 +478,7 @@ function TurnState({ turn }: { turn: Turn }) {
   }
 }
 
-// Placeholder lines at the reading rhythm while the first text is on its way.
+// Grey bars at the reading rhythm while the first text is on its way.
 function WaitingLines() {
   return (
     <div aria-label="Waiting for the answer" className="space-y-3 pt-2 pb-1">

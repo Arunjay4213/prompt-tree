@@ -1,6 +1,8 @@
 // prompt-tree server: a stateless streaming proxy to the model providers plus a JSON file store.
 // The HTTP contract is in shared/api.ts.
 
+// First, so .env is in process.env before the model registry reads it.
+import "./env";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Hono, type Context } from "hono";
@@ -11,7 +13,8 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { CONVERSATION_ID_PATTERN } from "../shared/api";
 import type { CompleteRequest, Health, SaveConflict, StreamEvent } from "../shared/api";
 import { ACTIVE_PROVIDERS, completeAnswer, DEFAULT_MODEL, MODE, MODELS, routeModel } from "./model";
-import { deleteConversation, listConversations, PROJECT_ROOT, readConversation, saveConversation } from "./store";
+import { SAMPLE } from "./demo/sample";
+import { deleteConversation, listConversations, PROJECT_ROOT, readConversation, saveConversation, seedDemoSample } from "./store";
 import type { BaseVersion } from "./store";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -22,7 +25,10 @@ function badRequest(c: Context, error: string) {
   return c.json({ error }, 400);
 }
 
-app.get("/api/health", (c) => c.json<Health>({ mode: MODE, models: MODELS, defaultModel: DEFAULT_MODEL }));
+const health: Health = { mode: MODE, models: MODELS, defaultModel: DEFAULT_MODEL };
+if (SAMPLE !== null) health.demo = { suggestedPrompt: SAMPLE.conversation.threads[0]!.turns[0]!.prompt };
+
+app.get("/api/health", (c) => c.json<Health>(health));
 
 app.get("/api/conversations", async (c) => c.json(await listConversations()));
 
@@ -107,9 +113,19 @@ app.post("/api/complete", async (c) => {
   });
 });
 
-// Serve the built web app when it exists, so `pnpm build && pnpm start` runs everything from here.
+// Where the page comes from.
+// vite:  `pnpm dev` or `pnpm dev:demo` runs Vite next to this server and Vite serves the page
+//        (pnpm names the script that started this server).
+// built: the built app in dist/, served from here (`pnpm build` then `pnpm start`).
+// none:  no built app, so this server answers the API only.
+type PageSource = "vite" | "built" | "none";
+
 const DIST_DIR = join(PROJECT_ROOT, "dist");
-if (existsSync(join(DIST_DIR, "index.html"))) {
+const HAS_BUILT_APP = existsSync(join(DIST_DIR, "index.html"));
+const PAGE_SOURCE: PageSource = ["dev:server", "dev:server:demo"].includes(process.env.npm_lifecycle_event ?? "") ? "vite" : HAS_BUILT_APP ? "built" : "none";
+
+// Serve the built web app when it exists, so `pnpm build && pnpm start` runs everything from here.
+if (HAS_BUILT_APP) {
   app.use("*", serveStatic({ root: DIST_DIR }));
   app.get("*", async (c, next) => {
     if (c.req.path.startsWith("/api")) return next();
@@ -119,7 +135,31 @@ if (existsSync(join(DIST_DIR, "index.html"))) {
 
 app.notFound((c) => c.json({ error: "Not found." }, 404));
 
+await seedDemoSample();
+
+function addressLine(url: string): string {
+  switch (PAGE_SOURCE) {
+    case "built":
+      return `prompt-tree is running. Open ${url}`;
+    case "vite":
+      return `prompt-tree API: ${url} (open the page at the Local address Vite prints)`;
+    case "none":
+      return `prompt-tree API: ${url}. There is no built page yet: run pnpm build first, or use pnpm dev.`;
+  }
+}
+
+function modeLine(): string {
+  switch (MODE) {
+    case "demo":
+      return "Demo mode: recorded and sample answers, no key needed.";
+    case "live":
+      return `Models: ${ACTIVE_PROVIDERS.map((p) => `${p.label} (${p.modelNames.length} ${p.modelNames.length === 1 ? "model" : "models"})`).join(", ")}.`;
+    case "no_key":
+      return "No model provider is set up. Add an API key to .env (see .env.example) and restart, or run pnpm dev:demo to try recorded answers.";
+  }
+}
+
 serve({ fetch: app.fetch, hostname: "127.0.0.1", port: PORT }, (info) => {
-  const counts = ACTIVE_PROVIDERS.map((provider) => `${provider.label} ${provider.modelNames.length}`).join(", ") || "none";
-  console.log(`prompt-tree server: mode ${MODE}, models: ${counts}, http://127.0.0.1:${info.port}`);
+  console.log(addressLine(`http://127.0.0.1:${info.port}`));
+  console.log(modeLine());
 });
